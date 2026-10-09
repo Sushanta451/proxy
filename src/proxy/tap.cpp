@@ -12,9 +12,11 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -358,6 +360,34 @@ bool serve_one(int down, const sockaddr_in& peer, const std::string& upstream_ho
     return relayed;
 }
 
+// A finished child stays a zombie until its parent waits for it, and a proxy
+// that serves forever would accumulate one per connection. One SIGCHLD can
+// stand for several exits, so reap in a loop until nothing is left.
+void reap_children(int)
+{
+    int saved_errno{errno}; // waitpid can clobber errno under the interrupted code
+    while (waitpid(-1, nullptr, WNOHANG) > 0)
+    {
+    }
+    errno = saved_errno;
+}
+
+bool install_reaper()
+{
+    struct sigaction action{};
+    action.sa_handler = reap_children;
+    sigemptyset(&action.sa_mask);
+    // SA_NOCLDSTOP: a stopped child is not a finished one. accept() already
+    // retries on EINTR, so SA_RESTART is a convenience rather than a need.
+    action.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &action, nullptr) == -1)
+    {
+        std::cerr << "sigaction(SIGCHLD): " << std::strerror(errno) << '\n';
+        return false;
+    }
+    return true;
+}
+
 void usage()
 {
     std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once]\n"
@@ -424,6 +454,11 @@ int main(int argc, char* argv[])
     int listen_fd{listen_on(listen_port)};
     if (listen_fd == -1)
     {
+        return 1;
+    }
+    if (!once && !install_reaper())
+    {
+        close(listen_fd);
         return 1;
     }
     std::cout << "listening on 127.0.0.1:" << listen_port << ", upstream " << upstream_host << ':'
