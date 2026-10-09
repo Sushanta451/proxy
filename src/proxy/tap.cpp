@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -446,14 +447,40 @@ int main(int argc, char* argv[])
             ok = false;
             break;
         }
-        // A connection that goes wrong is this connection's problem, not the
-        // listener's, so it does not decide the exit status of a run that
-        // keeps serving. Under --once the single connection *is* the run.
-        bool served{serve_one(down, peer, upstream_host, upstream_port)};
+        // Under --once the single connection *is* the run, so it is served in
+        // this process and decides the exit status.
         if (once)
         {
-            ok = served;
+            ok = serve_one(down, peer, upstream_host, upstream_port);
             break;
+        }
+
+        // Otherwise each connection gets a child, so a slow one no longer holds
+        // up the next accept(). Anything still buffered in std::cout would be
+        // copied into the child and printed twice, so flush before forking.
+        std::cout.flush();
+        pid_t child{fork()};
+        if (child == -1)
+        {
+            // Out of processes is this connection's problem; the listener is
+            // fine, so drop the connection and keep accepting.
+            std::cerr << "fork: " << std::strerror(errno) << '\n';
+            close(down);
+            continue;
+        }
+        if (child == 0)
+        {
+            // The child never accepts, so it lets go of the listener. A failed
+            // connection is reported in the child's exit status, not the run's.
+            close(listen_fd);
+            bool served{serve_one(down, peer, upstream_host, upstream_port)};
+            // _exit skips the stdio teardown, so flush what the relay printed.
+            std::cout.flush();
+            _exit(served ? 0 : 1);
+        }
+        if (close(down) == -1)
+        {
+            std::cerr << "close(accepted): " << std::strerror(errno) << '\n';
         }
     }
 
