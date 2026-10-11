@@ -274,6 +274,14 @@ bool relay(int down, int up)
             {
                 return true; // interrupted before any data arrived; poll again
             }
+            // On a non-blocking socket this is a fourth outcome, distinct from
+            // an error and from an EOF: there is nothing to read *right now*.
+            // poll() can report readiness that is gone by the time recv runs,
+            // so this is not a bug to report. Leave the side open and poll again.
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                return true;
+            }
             std::cerr << "recv: " << std::strerror(errno) << '\n';
             return false;
         }
