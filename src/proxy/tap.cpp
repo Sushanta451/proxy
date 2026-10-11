@@ -378,9 +378,14 @@ void reap_children(int)
     errno = saved_errno;
 }
 
+// `sigaction` names both a function and a struct, so the struct needs its tag.
+// The alias keeps brace init without a `struct x{}` that clang-format versions
+// disagree on how to space.
+using SigAction = struct sigaction;
+
 bool install_reaper()
 {
-    struct sigaction action{};
+    SigAction action{};
     action.sa_handler = reap_children;
     sigemptyset(&action.sa_mask);
     // SA_NOCLDSTOP: a stopped child is not a finished one. accept() already
