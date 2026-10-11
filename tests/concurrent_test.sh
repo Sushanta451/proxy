@@ -15,7 +15,9 @@ work="$(mktemp -d)"
 pids=()
 cleanup() {
   exec 3>&- 2>/dev/null || true
-  [ "${#pids[@]}" -gt 0 ] && kill "${pids[@]}" 2>/dev/null
+  # Some of these have usually exited already; kill failing on them is not an
+  # error, and under set -e it would turn a passing run into a failure.
+  if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi
   rm -rf "${work}"
   return 0
 }
