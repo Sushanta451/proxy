@@ -7,6 +7,7 @@
 // fault injection in ROADMAP.md gets layered onto this pump.
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -70,10 +71,37 @@ bool send_all(int fd, const char* data, size_t len)
             {
                 continue;
             }
+            // A non-blocking socket whose send buffer is full says so instead of
+            // blocking. Until the relay can hold the remainder itself, wait here
+            // for room and retry, which is what a blocking send did implicitly.
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                pollfd writable{fd, POLLOUT, 0};
+                if (poll(&writable, 1, -1) == -1 && errno != EINTR)
+                {
+                    std::cerr << "poll(send): " << std::strerror(errno) << '\n';
+                    return false;
+                }
+                continue;
+            }
             std::cerr << "send: " << std::strerror(errno) << '\n';
             return false;
         }
         sent += static_cast<size_t>(written);
+    }
+    return true;
+}
+
+// From here on the relay never wants a call to block: a recv or send that would
+// have to wait reports EAGAIN, and poll() decides when to try again. Read the
+// existing flags first so setting O_NONBLOCK does not clear the others.
+bool set_nonblocking(int fd)
+{
+    int flags{fcntl(fd, F_GETFL)};
+    if (flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+        std::cerr << "fcntl(O_NONBLOCK): " << std::strerror(errno) << '\n';
+        return false;
     }
     return true;
 }
@@ -343,7 +371,10 @@ bool serve_one(int down, const sockaddr_in& peer, const std::string& upstream_ho
         return false;
     }
 
-    if (!suppress_sigpipe(down) || !suppress_sigpipe(up))
+    // dial() connects while the socket is still blocking, so only the relay
+    // itself runs non-blocking.
+    if (!suppress_sigpipe(down) || !suppress_sigpipe(up) || !set_nonblocking(down) ||
+        !set_nonblocking(up))
     {
         close(down);
         close(up);
