@@ -62,7 +62,11 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/concurrent_test.sh"
             "$<TARGET_FILE_DIR:tcptap>" 9140 9141)
 
+  add_test(NAME large-payload
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/large_payload_test.sh"
+            "$<TARGET_FILE_DIR:tcptap>" 9150 9151)
+
   set_tests_properties(relay-short relay-longer upstream-refused
-    sequential-connections concurrent-connections
+    sequential-connections concurrent-connections large-payload
     PROPERTIES TIMEOUT 30)
 endif()
