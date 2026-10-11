@@ -31,8 +31,20 @@ A proxy is harder than a server, and the difficulty is specific:
 
 **1. Two descriptors, not one.** A server reads a request and writes a
 response; it is never waiting on two things at once. A proxy always is. That
-forces a readiness-notification API from the very first version — `select()`
-today, `poll()` then `kqueue`/`epoll` as the project grows.
+forces a readiness-notification API from the very first version. v1 used
+`select()`; the relay now runs on `poll()`, and `kqueue`/`epoll` come later.
+
+`select()` is gone for good rather than kept as a fallback. Its `fd_set` is a
+fixed-size bitmap, so it cannot watch a descriptor numbered `FD_SETSIZE`
+(usually 1024) or higher — and writing one past that limit is undefined
+behaviour, not an error. A forked child holds only a handful of
+descriptors, but the single event loop planned later puts every connection's
+two descriptors in one process, and there that ceiling is reachable. The set
+also has to be rebuilt on every pass, because `select()` overwrites it.
+`poll()` takes an array of `pollfd` instead: no ceiling, inputs and results
+in separate fields, and a closed direction drops out by setting its fd to
+`-1`. It is in POSIX, so it is the portable floor the faster
+platform-specific APIs are measured against.
 
 **2. Half-closes must be forwarded, not swallowed.** TCP connections close one
 direction at a time. When the client stops writing, the proxy gets a `recv` of
@@ -89,7 +101,7 @@ by latency.
 | --- | --- | --- |
 | Language | C++20 | Brace init that catches narrowing, `string_view` over raw buffers, RAII for descriptors |
 | Network API | POSIX / BSD sockets | The interface every networking library in every language wraps |
-| Multiplexing | `select()` → `poll()` → `kqueue` (BSD/macOS) + `epoll` (Linux) | The actual historical progression of how servers learned to scale, walked one step at a time |
+| Multiplexing | ~~`select()`~~ → `poll()` → `kqueue` (BSD/macOS) + `epoll` (Linux) | The actual historical progression of how servers learned to scale, walked one step at a time |
 | Protocol literacy | TCP half-close & RST, HTTP/1.1 request lines, TLS record layer + ClientHello SNI | Reading structured bytes off the wire by hand, bounds-checking attacker-controlled lengths |
 | Capture format | `libpcap` / pcapng writing | Output that opens in Wireshark, which is how network bugs are actually read |
 | Traffic shaping | Token-bucket rate limiting, `SO_LINGER` RST injection, seeded jitter | What `tc netem` and Toxiproxy do, built from the primitives |
