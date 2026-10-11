@@ -2,14 +2,14 @@
 //
 // connection-logger watched one end of a connection from the inside. This sits
 // in the middle: it accepts a downstream connection, dials the upstream, and
-// relays bytes between them with select(2), printing every chunk along with the
+// relays bytes between them with poll(2), printing every chunk along with the
 // direction it travelled. v1 is a faithful mirror — it rewrites nothing. The
 // fault injection in ROADMAP.md gets layered onto this pump.
 
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -244,7 +244,7 @@ bool relay(int down, int up)
         {
             if (errno == EINTR)
             {
-                return true; // interrupted before any data arrived; select again
+                return true; // interrupted before any data arrived; poll again
             }
             std::cerr << "recv: " << std::strerror(errno) << '\n';
             return false;
@@ -275,36 +275,42 @@ bool relay(int down, int up)
         return send_all(to, buf, count);
     };
 
+    // poll() takes the descriptors as an array rather than a bitmap, so there is
+    // no FD_SETSIZE ceiling and no set to rebuild every pass. A negative fd is
+    // skipped by poll(), which is how a direction that has seen EOF drops out.
+    pollfd fds[2]{{down, POLLIN, 0}, {up, POLLIN, 0}};
+    constexpr short kReadable{POLLIN | POLLHUP | POLLERR};
+
     while (down_open || up_open)
     {
-        fd_set readable;
-        FD_ZERO(&readable);
-        if (down_open)
-        {
-            FD_SET(down, &readable);
-        }
-        if (up_open)
-        {
-            FD_SET(up, &readable);
-        }
+        fds[0].fd = down_open ? down : -1;
+        fds[1].fd = up_open ? up : -1;
 
-        int nfds{(down > up ? down : up) + 1};
-        if (select(nfds, &readable, nullptr, nullptr, nullptr) == -1)
+        if (poll(fds, 2, -1) == -1)
         {
             if (errno == EINTR)
             {
                 continue;
             }
-            std::cerr << "select: " << std::strerror(errno) << '\n';
+            std::cerr << "poll: " << std::strerror(errno) << '\n';
             return false;
         }
 
-        if (down_open && FD_ISSET(down, &readable) && !pump(down, up, down_open, "c>u", to_up))
+        // POLLHUP and POLLERR are let through to recv(), which turns them into
+        // an EOF or an errno the same way it would for any other read.
+        if (down_open && (fds[0].revents & kReadable) != 0 &&
+            !pump(down, up, down_open, "c>u", to_up))
         {
             return false;
         }
-        if (up_open && FD_ISSET(up, &readable) && !pump(up, down, up_open, "u>c", to_down))
+        if (up_open && (fds[1].revents & kReadable) != 0 &&
+            !pump(up, down, up_open, "u>c", to_down))
         {
+            return false;
+        }
+        if (((fds[0].revents | fds[1].revents) & POLLNVAL) != 0)
+        {
+            std::cerr << "poll: descriptor not open\n";
             return false;
         }
     }
