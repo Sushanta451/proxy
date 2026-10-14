@@ -56,42 +56,6 @@ bool suppress_sigpipe(int fd)
     return true;
 }
 
-// send() is allowed to accept fewer bytes than it was offered, so everything the
-// proxy relays leaves through this loop. A short write is normal here, not an
-// error: the kernel's send buffer filled up and the rest still has to go.
-bool send_all(int fd, const char* data, size_t len)
-{
-    size_t sent{0};
-    while (sent < len)
-    {
-        ssize_t written{send(fd, data + sent, len - sent, kSendFlags)};
-        if (written == -1)
-        {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            // A non-blocking socket whose send buffer is full says so instead of
-            // blocking. Until the relay can hold the remainder itself, wait here
-            // for room and retry, which is what a blocking send did implicitly.
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                pollfd writable{fd, POLLOUT, 0};
-                if (poll(&writable, 1, -1) == -1 && errno != EINTR)
-                {
-                    std::cerr << "poll(send): " << std::strerror(errno) << '\n';
-                    return false;
-                }
-                continue;
-            }
-            std::cerr << "send: " << std::strerror(errno) << '\n';
-            return false;
-        }
-        sent += static_cast<size_t>(written);
-    }
-    return true;
-}
-
 // From here on the relay never wants a call to block: a recv or send that would
 // have to wait reports EAGAIN, and poll() decides when to try again. Read the
 // existing flags first so setting O_NONBLOCK does not clear the others.
@@ -252,75 +216,134 @@ int dial(const std::string& host, const std::string& port)
     return fd;
 }
 
+// One direction of the relay: bytes read from `from` and written to `to`.
+// `pending` holds what has been read but not yet accepted by `to`. A send that
+// takes only part of a chunk leaves the rest here rather than spinning on it,
+// and poll() says when `to` has room again.
+struct Direction
+{
+    Direction(int from_fd, int to_fd, const char* label) : from{from_fd}, to{to_fd}, arrow{label}
+    {
+    }
+
+    int from;
+    int to;
+    const char* arrow;
+    bool reading{true}; // `from` has not sent EOF yet
+    bool shut{false};   // EOF has been forwarded to `to`
+    std::string pending;
+    unsigned long long relayed{0};
+};
+
+// Push as much of `pending` as `to` will take without blocking. Once the source
+// has finished and everything it sent has gone out, forward its EOF.
+bool flush(Direction& d)
+{
+    while (!d.pending.empty())
+    {
+        ssize_t written{send(d.to, d.pending.data(), d.pending.size(), kSendFlags)};
+        if (written == -1)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                return true; // the rest waits for POLLOUT
+            }
+            std::cerr << "send: " << std::strerror(errno) << '\n';
+            return false;
+        }
+        d.pending.erase(0, static_cast<size_t>(written));
+    }
+
+    // Forward the EOF instead of tearing down the whole pair, so the opposite
+    // direction can still drain. ENOTCONN means the peer got there first.
+    if (!d.reading && !d.shut)
+    {
+        if (shutdown(d.to, SHUT_WR) == -1 && errno != ENOTCONN)
+        {
+            std::cerr << "shutdown: " << std::strerror(errno) << '\n';
+            return false;
+        }
+        d.shut = true;
+    }
+    return true;
+}
+
+bool read_side(Direction& d)
+{
+    char buf[kBufferSize];
+    ssize_t received{recv(d.from, buf, sizeof(buf), 0)};
+
+    if (received == -1)
+    {
+        // EINTR: interrupted before any data arrived. EAGAIN: on a non-blocking
+        // socket, a fourth outcome distinct from an error and from an EOF; poll()
+        // readiness can be stale by the time recv runs. Either way, poll again.
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return true;
+        }
+        std::cerr << "recv: " << std::strerror(errno) << '\n';
+        return false;
+    }
+
+    if (received == 0)
+    {
+        d.reading = false;
+        std::cout << d.arrow << " eof" << std::endl;
+        return flush(d);
+    }
+
+    auto count{static_cast<size_t>(received)};
+    d.relayed += count;
+    std::cout << d.arrow << ' ' << count << (count == 1 ? " byte " : " bytes ");
+    print_preview(std::string_view(buf, count));
+    // A long-running server's stdout is block-buffered once it is redirected,
+    // and the tests read this log while the proxy is still alive. Flush.
+    std::cout << std::endl;
+
+    d.pending.append(buf, count);
+    return flush(d);
+}
+
+// Whether to watch `d.from` for more input. Not while `pending` is non-empty:
+// reading on regardless would let a fast sender grow it without limit.
+bool wants_read(const Direction& d)
+{
+    return d.reading && d.pending.empty();
+}
+
 // Relay until both directions have closed. The two halves are tracked
 // separately because TCP lets one end stop writing while the other keeps going:
 // a client that has finished its request still needs the response to come back.
 bool relay(int down, int up)
 {
-    char buf[kBufferSize];
-    bool down_open{true};
-    bool up_open{true};
-    unsigned long long to_up{0};
-    unsigned long long to_down{0};
-
-    const auto pump = [&](int from, int to, bool& from_open, const char* arrow,
-                          unsigned long long& relayed) -> bool
-    {
-        ssize_t received{recv(from, buf, sizeof(buf), 0)};
-
-        if (received == -1)
-        {
-            if (errno == EINTR)
-            {
-                return true; // interrupted before any data arrived; poll again
-            }
-            // On a non-blocking socket this is a fourth outcome, distinct from
-            // an error and from an EOF: there is nothing to read *right now*.
-            // poll() can report readiness that is gone by the time recv runs,
-            // so this is not a bug to report. Leave the side open and poll again.
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                return true;
-            }
-            std::cerr << "recv: " << std::strerror(errno) << '\n';
-            return false;
-        }
-
-        if (received == 0)
-        {
-            // The peer finished writing. Forward the EOF instead of tearing down the
-            // whole pair, so the opposite direction can still drain.
-            if (shutdown(to, SHUT_WR) == -1 && errno != ENOTCONN)
-            {
-                std::cerr << "shutdown: " << std::strerror(errno) << '\n';
-                return false;
-            }
-            from_open = false;
-            std::cout << arrow << " eof" << std::endl;
-            return true;
-        }
-
-        auto count{static_cast<size_t>(received)};
-        relayed += count;
-        std::cout << arrow << ' ' << count << (count == 1 ? " byte " : " bytes ");
-        print_preview(std::string_view(buf, count));
-        // A long-running server's stdout is block-buffered once it is redirected,
-        // and the tests read this log while the proxy is still alive. Flush.
-        std::cout << std::endl;
-
-        return send_all(to, buf, count);
-    };
+    Direction to_upstream{down, up, "c>u"};
+    Direction to_downstream{up, down, "u>c"};
 
     // poll() takes the descriptors as an array rather than a bitmap, so there is
     // no FD_SETSIZE ceiling and no set to rebuild every pass. A negative fd is
-    // skipped by poll(), which is how a direction that has seen EOF drops out.
-    pollfd fds[2]{{down, POLLIN, 0}, {up, POLLIN, 0}};
+    // skipped by poll(), which is how a side with nothing to wait for drops out.
+    pollfd fds[2]{{down, 0, 0}, {up, 0, 0}};
     constexpr short kReadable{POLLIN | POLLHUP | POLLERR};
+    constexpr short kWritable{POLLOUT | POLLHUP | POLLERR};
 
-    while (down_open || up_open)
+    // A side is watched for input on behalf of the direction it feeds, and for
+    // room on behalf of the direction that writes to it.
+    const auto watch = [](pollfd& p, int fd, const Direction& feeds, const Direction& drains)
     {
-        fds[0].fd = down_open ? down : -1;
-        fds[1].fd = up_open ? up : -1;
+        p.events = static_cast<short>((wants_read(feeds) ? POLLIN : 0) |
+                                      (drains.pending.empty() ? 0 : POLLOUT));
+        p.fd = p.events == 0 ? -1 : fd;
+    };
+
+    while (!to_upstream.shut || !to_downstream.shut)
+    {
+        watch(fds[0], down, to_upstream, to_downstream);
+        watch(fds[1], up, to_downstream, to_upstream);
 
         if (poll(fds, 2, -1) == -1)
         {
@@ -331,28 +354,37 @@ bool relay(int down, int up)
             std::cerr << "poll: " << std::strerror(errno) << '\n';
             return false;
         }
-
-        // POLLHUP and POLLERR are let through to recv(), which turns them into
-        // an EOF or an errno the same way it would for any other read.
-        if (down_open && (fds[0].revents & kReadable) != 0 &&
-            !pump(down, up, down_open, "c>u", to_up))
-        {
-            return false;
-        }
-        if (up_open && (fds[1].revents & kReadable) != 0 &&
-            !pump(up, down, up_open, "u>c", to_down))
-        {
-            return false;
-        }
         if (((fds[0].revents | fds[1].revents) & POLLNVAL) != 0)
         {
             std::cerr << "poll: descriptor not open\n";
             return false;
         }
+
+        // POLLHUP and POLLERR are let through to recv() and send(), which turn
+        // them into an EOF or an errno the same way they would for any other call.
+        if ((fds[0].revents & kWritable) != 0 && !to_downstream.pending.empty() &&
+            !flush(to_downstream))
+        {
+            return false;
+        }
+        if ((fds[1].revents & kWritable) != 0 && !to_upstream.pending.empty() &&
+            !flush(to_upstream))
+        {
+            return false;
+        }
+        if ((fds[0].revents & kReadable) != 0 && wants_read(to_upstream) && !read_side(to_upstream))
+        {
+            return false;
+        }
+        if ((fds[1].revents & kReadable) != 0 && wants_read(to_downstream) &&
+            !read_side(to_downstream))
+        {
+            return false;
+        }
     }
 
-    std::cout << "closed: " << to_up << " bytes upstream, " << to_down << " bytes downstream"
-              << std::endl;
+    std::cout << "closed: " << to_upstream.relayed << " bytes upstream, " << to_downstream.relayed
+              << " bytes downstream" << std::endl;
     return true;
 }
 
