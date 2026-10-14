@@ -40,6 +40,8 @@ constexpr int kSendFlags{0};
 
 constexpr size_t kBufferSize{4096};
 constexpr size_t kPreviewBytes{64};
+// How much one direction may hold for a far side that is not keeping up.
+constexpr size_t kHighWaterBytes{64 * 1024};
 
 bool suppress_sigpipe(int fd)
 {
@@ -217,7 +219,8 @@ int dial(const std::string& host, const std::string& port)
 }
 
 // One direction of the relay: bytes read from `from` and written to `to`.
-// `pending` holds what has been read but not yet accepted by `to`. A send that
+// `pending` holds what has been read but not yet accepted by `to`, up to
+// kHighWaterBytes. A send that
 // takes only part of a chunk leaves the rest here rather than spinning on it,
 // and poll() says when `to` has room again.
 struct Direction
@@ -309,11 +312,14 @@ bool read_side(Direction& d)
     return flush(d);
 }
 
-// Whether to watch `d.from` for more input. Not while `pending` is non-empty:
-// reading on regardless would let a fast sender grow it without limit.
+// Whether to watch `d.from` for more input. Reading while a little is still
+// queued keeps both sockets busy, but past the high-water mark the source is
+// left unread: its bytes back up in the kernel, TCP's window closes, and a slow
+// reader ends up slowing the sender instead of growing this buffer without limit.
+// One recv can overshoot the mark by at most a buffer's worth.
 bool wants_read(const Direction& d)
 {
-    return d.reading && d.pending.empty();
+    return d.reading && d.pending.size() < kHighWaterBytes;
 }
 
 // Relay until both directions have closed. The two halves are tracked
