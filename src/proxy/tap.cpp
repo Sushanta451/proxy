@@ -2,7 +2,7 @@
 //
 // connection-logger watched one end of a connection from the inside. This sits
 // in the middle: it accepts a downstream connection, dials the upstream, and
-// relays bytes between them with poll(2), printing every chunk along with the
+// relays bytes between them through a small event-loop shim, printing every chunk along with the
 // direction it travelled. v1 is a faithful mirror — it rewrites nothing. The
 // fault injection in ROADMAP.md gets layered onto this pump.
 
@@ -10,7 +10,6 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -24,9 +23,17 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include "event_loop.h"
 
 namespace
 {
+
+using tcptap::EventLoop;
+using tcptap::kWantRead;
+using tcptap::kWantWrite;
+using tcptap::Ready;
 
 // A write to a peer that has already gone away raises SIGPIPE, which would kill
 // the proxy mid-relay. The two platforms disagree about where the suppression
@@ -330,62 +337,41 @@ bool relay(int down, int up)
     Direction to_upstream{down, up, "c>u"};
     Direction to_downstream{up, down, "u>c"};
 
-    // poll() takes the descriptors as an array rather than a bitmap, so there is
-    // no FD_SETSIZE ceiling and no set to rebuild every pass. A negative fd is
-    // skipped by poll(), which is how a side with nothing to wait for drops out.
-    pollfd fds[2]{{down, 0, 0}, {up, 0, 0}};
-    constexpr short kReadable{POLLIN | POLLHUP | POLLERR};
-    constexpr short kWritable{POLLOUT | POLLHUP | POLLERR};
-
     // A side is watched for input on behalf of the direction it feeds, and for
     // room on behalf of the direction that writes to it.
-    const auto watch = [](pollfd& p, int fd, const Direction& feeds, const Direction& drains)
-    {
-        p.events = static_cast<short>((wants_read(feeds) ? POLLIN : 0) |
-                                      (drains.pending.empty() ? 0 : POLLOUT));
-        p.fd = p.events == 0 ? -1 : fd;
-    };
+    const auto interest = [](const Direction& feeds, const Direction& drains)
+    { return (wants_read(feeds) ? kWantRead : 0U) | (drains.pending.empty() ? 0U : kWantWrite); };
 
+    EventLoop loop;
+    if (!loop.add(down, 0) || !loop.add(up, 0))
+    {
+        std::cerr << "event loop: " << std::strerror(errno) << '\n';
+        return false;
+    }
+
+    std::vector<Ready> ready;
     while (!to_upstream.shut || !to_downstream.shut)
     {
-        watch(fds[0], down, to_upstream, to_downstream);
-        watch(fds[1], up, to_downstream, to_upstream);
-
-        if (poll(fds, 2, -1) == -1)
+        if (!loop.modify(down, interest(to_upstream, to_downstream)) ||
+            !loop.modify(up, interest(to_downstream, to_upstream)) || !loop.wait(ready))
         {
-            if (errno == EINTR)
+            std::cerr << "event loop: " << std::strerror(errno) << '\n';
+            return false;
+        }
+
+        for (const Ready& r : ready)
+        {
+            // Each side drains what is queued for it before it is read from.
+            Direction& feeds{r.fd == down ? to_upstream : to_downstream};
+            Direction& drains{r.fd == down ? to_downstream : to_upstream};
+            if (r.writable && !drains.pending.empty() && !flush(drains))
             {
-                continue;
+                return false;
             }
-            std::cerr << "poll: " << std::strerror(errno) << '\n';
-            return false;
-        }
-        if (((fds[0].revents | fds[1].revents) & POLLNVAL) != 0)
-        {
-            std::cerr << "poll: descriptor not open\n";
-            return false;
-        }
-
-        // POLLHUP and POLLERR are let through to recv() and send(), which turn
-        // them into an EOF or an errno the same way they would for any other call.
-        if ((fds[0].revents & kWritable) != 0 && !to_downstream.pending.empty() &&
-            !flush(to_downstream))
-        {
-            return false;
-        }
-        if ((fds[1].revents & kWritable) != 0 && !to_upstream.pending.empty() &&
-            !flush(to_upstream))
-        {
-            return false;
-        }
-        if ((fds[0].revents & kReadable) != 0 && wants_read(to_upstream) && !read_side(to_upstream))
-        {
-            return false;
-        }
-        if ((fds[1].revents & kReadable) != 0 && wants_read(to_downstream) &&
-            !read_side(to_downstream))
-        {
-            return false;
+            if (r.readable && wants_read(feeds) && !read_side(feeds))
+            {
+                return false;
+            }
         }
     }
 

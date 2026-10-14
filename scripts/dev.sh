@@ -23,7 +23,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 build_dir="build"
-sources=(src/proxy/tap.cpp src/testing/echo_server.cpp src/testing/send_client.cpp)
+sources=(src/proxy/tap.cpp src/proxy/event_loop.h src/testing/echo_server.cpp src/testing/send_client.cpp)
 shell_scripts=(
   scripts/dev.sh
   scripts/install_hooks.sh

@@ -65,7 +65,7 @@ jobs:
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
       - name: Check formatting
-        run: clang-format --dry-run --Werror src/proxy/tap.cpp src/testing/echo_server.cpp src/testing/send_client.cpp
+        run: clang-format --dry-run --Werror src/proxy/tap.cpp src/proxy/event_loop.h src/testing/echo_server.cpp src/testing/send_client.cpp
 
   shellcheck:
     name: shellcheck
