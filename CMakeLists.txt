@@ -66,7 +66,12 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/large_payload_test.sh"
             "$<TARGET_FILE_DIR:tcptap>" 9150 9151)
 
+  add_test(NAME slow-reader
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/slow_reader_test.sh"
+            "$<TARGET_FILE_DIR:tcptap>" 9160 9161)
+
   set_tests_properties(relay-short relay-longer upstream-refused
     sequential-connections concurrent-connections large-payload
+    slow-reader
     PROPERTIES TIMEOUT 30)
 endif()
