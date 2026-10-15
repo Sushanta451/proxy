@@ -3,22 +3,30 @@
 //
 // The relay is written against this interface rather than against poll()
 // directly, so a faster platform backend can slot in behind it without
-// touching the relay. On macOS and the BSDs that backend is kqueue; everywhere
-// else poll() is the portable default, since it is in POSIX.
+// touching the relay: kqueue on macOS and the BSDs, epoll on Linux, and poll()
+// everywhere else as the portable default, since it is in POSIX.
 //
-// Both backends implement the same three calls with the same meaning, chosen
-// by #if at compile time. A backend that only compiles on one platform must
-// never be the only definition of EventLoop.
+// Every backend implements the same three calls with the same meaning, chosen
+// by #if at compile time. Defining TCPTAP_EVENT_POLL (CMake's
+// -DTCPTAP_FORCE_POLL=ON) selects poll() on any platform, so the fallback keeps
+// getting built and tested on machines that would never pick it on their own.
 
 #pragma once
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||   \
+#if defined(TCPTAP_EVENT_POLL)
+// forced: the portable fallback, whatever the platform
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || \
     defined(__DragonFly__)
 #define TCPTAP_EVENT_KQUEUE 1
+#elif defined(__linux__)
+#define TCPTAP_EVENT_EPOLL 1
 #endif
 
-#ifdef TCPTAP_EVENT_KQUEUE
+#if defined(TCPTAP_EVENT_KQUEUE)
 #include <sys/event.h>
+#include <unistd.h>
+#elif defined(TCPTAP_EVENT_EPOLL)
+#include <sys/epoll.h>
 #include <unistd.h>
 #else
 #include <poll.h>
@@ -147,6 +155,106 @@ class EventLoop
     }
 
     int kq_;
+    std::vector<Watched> watched_;
+};
+
+#elif defined(TCPTAP_EVENT_EPOLL)
+
+// epoll, like kqueue, keeps the interest set in the kernel. Unlike kqueue it has
+// one registration per descriptor carrying both interests, and a descriptor with
+// none is left registered with an empty mask rather than removed.
+class EventLoop
+{
+  public:
+    EventLoop() : ep_{epoll_create1(EPOLL_CLOEXEC)}
+    {
+    }
+    ~EventLoop()
+    {
+        if (ep_ != -1 && close(ep_) == -1)
+        {
+            std::cerr << "close(epoll): " << std::strerror(errno) << '\n';
+        }
+    }
+    EventLoop(const EventLoop&) = delete;
+    EventLoop& operator=(const EventLoop&) = delete;
+
+    bool add(int fd, unsigned interest)
+    {
+        if (ep_ == -1)
+        {
+            return false; // errno is still epoll_create1()'s
+        }
+        epoll_event ev{mask(interest), {}};
+        ev.data.fd = fd;
+        if (epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev) == -1)
+        {
+            return false;
+        }
+        watched_.push_back(Watched{fd, interest});
+        return true;
+    }
+
+    bool modify(int fd, unsigned interest)
+    {
+        for (Watched& w : watched_)
+        {
+            if (w.fd != fd)
+            {
+                continue;
+            }
+            if (w.interest == interest)
+            {
+                return true; // the relay asks every pass; skip the syscall
+            }
+            epoll_event ev{mask(interest), {}};
+            ev.data.fd = fd;
+            if (epoll_ctl(ep_, EPOLL_CTL_MOD, fd, &ev) == -1)
+            {
+                return false;
+            }
+            w.interest = interest;
+            return true;
+        }
+        errno = ENOENT;
+        return false;
+    }
+
+    // Same contract as the other backends. EPOLLHUP and EPOLLERR are reported
+    // even with an empty mask, and count as both readable and writable.
+    bool wait(std::vector<Ready>& out)
+    {
+        out.clear();
+        epoll_event events[8];
+        int count{epoll_wait(ep_, events, 8, -1)};
+        if (count == -1)
+        {
+            return errno == EINTR;
+        }
+        for (int i = 0; i < count; ++i)
+        {
+            std::uint32_t got{events[i].events};
+            bool trouble{(got & (EPOLLHUP | EPOLLERR)) != 0};
+            out.push_back(Ready{events[i].data.fd, (got & EPOLLIN) != 0 || trouble,
+                                (got & EPOLLOUT) != 0 || trouble});
+        }
+        return true;
+    }
+
+  private:
+    struct Watched
+    {
+        int fd;
+        unsigned interest;
+    };
+
+    static std::uint32_t mask(unsigned interest)
+    {
+        return ((interest & kWantRead) != 0 ? std::uint32_t{EPOLLIN} : 0U) |
+               ((interest & kWantWrite) != 0 ? std::uint32_t{EPOLLOUT} : 0U);
+    }
+
+    int ep_;
     std::vector<Watched> watched_;
 };
 

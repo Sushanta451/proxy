@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(TCPTAP_WERROR "Treat warnings as errors (CI builds with this on)" OFF)
 option(ENABLE_ASAN "Build with AddressSanitizer and UBSan" OFF)
+option(TCPTAP_FORCE_POLL "Use the poll() event loop instead of kqueue/epoll" OFF)
 
 # One interface target carries the warning and sanitizer policy. Every binary
 # links it, so the flags can never drift between targets.
@@ -17,6 +18,12 @@ target_compile_options(tcptap_flags INTERFACE
 
 if(TCPTAP_WERROR)
   target_compile_options(tcptap_flags INTERFACE -Werror)
+endif()
+
+# The platform backend is picked by #if in event_loop.h. This forces the
+# portable one, so it is still built and tested where it is never the default.
+if(TCPTAP_FORCE_POLL)
+  target_compile_definitions(tcptap_flags INTERFACE TCPTAP_EVENT_POLL)
 endif()
 
 if(ENABLE_ASAN)
