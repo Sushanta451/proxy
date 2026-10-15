@@ -25,9 +25,10 @@ ignores them appears to work on a loopback connection and fails on a real one.
   any byte, including zero. Print it through `std::string_view(buf, n)`, never
   `std::cout << buf`.
 - Always bound the read by `sizeof(buf)`.
-- **`send` may transmit fewer bytes than asked.** Everything goes out through
-  the `send_all` loop, or there is a comment explaining why a partial send is
-  impossible at that call site.
+- **`send` may transmit fewer bytes than asked.** In the proxy the unsent rest
+  stays in that direction's pending buffer until the far side has room; the
+  test programs use a `send_all` loop. Anything else needs a comment explaining
+  why a partial send is impossible at that call site.
 
 ## Half-close
 
@@ -81,6 +82,14 @@ on each `send` instead. The `kSendFlags` / `suppress_sigpipe` pair in every
 source file shows the pattern — guard a platform option with `#ifdef` and
 provide the other platform's equivalent. A macOS-only symbol fails the build.
 
+The event-loop backends follow a stricter version of the same rule. Each one
+lives in `src/proxy/event_loop.h` under one branch of a single
+`#if`/`#elif` chain keyed on the platform macro (`__APPLE__` and the BSDs for
+`kqueue`, `__linux__` for `epoll`), with `poll()` as the final `#else`. Every
+branch defines the same `EventLoop` with the same three calls and the same
+meaning, so the relay never needs an `#ifdef` of its own. A new backend adds a
+branch to that chain, and a CI job on a platform that selects it.
+
 ## Build system
 
 CMake ≥ 3.20, C++20, Ninja when available. Three binaries and one interface
@@ -117,10 +126,14 @@ Each test owns its own pair of ports so `ctest -j` is safe. Keep it that way.
 `.github/workflows/ci.yml` runs on every push and PR:
 
 - `build (gcc)` / `build (clang)` — configure, build with `-Werror`, run CTest
+  on Linux, which selects the `epoll` backend
+- `build (gcc, poll() fallback)` — the same with `-DTCPTAP_FORCE_POLL=ON`
+- `build (macOS clang)` — the same on macOS, which selects `kqueue`
 - `tests (ASan + UBSan)` — the same suite under sanitizers
 - `clang-format` — formatting check
 - `shellcheck` — `scripts/*.sh`, `tests/*.sh`, and the hook
 
-Every one of those is also run by `./scripts/dev.sh ci --strict`, deliberately:
-the local gate is a superset of CI, so nothing can land that the pre-commit
-check was unable to see.
+Every one of those is also run by `./scripts/dev.sh ci --strict`, deliberately,
+with one exception: a machine builds only the backend its own platform selects
+(plus `poll()` with `-DTCPTAP_FORCE_POLL=ON`). The other platform's backend is
+checked in CI, so a change to it should be built there before it is relied on.

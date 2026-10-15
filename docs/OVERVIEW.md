@@ -32,7 +32,8 @@ A proxy is harder than a server, and the difficulty is specific:
 **1. Two descriptors, not one.** A server reads a request and writes a
 response; it is never waiting on two things at once. A proxy always is. That
 forces a readiness-notification API from the very first version. v1 used
-`select()`; the relay now runs on `poll()`, and `kqueue`/`epoll` come later.
+`select()`; the relay now runs on a small event-loop shim
+(`src/proxy/event_loop.h`) with three backends behind it.
 
 `select()` is gone for good rather than kept as a fallback. Its `fd_set` is a
 fixed-size bitmap, so it cannot watch a descriptor numbered `FD_SETSIZE`
@@ -45,6 +46,23 @@ also has to be rebuilt on every pass, because `select()` overwrites it.
 in separate fields, and a closed direction drops out by setting its fd to
 `-1`. It is in POSIX, so it is the portable floor the faster
 platform-specific APIs are measured against.
+
+The shim has three calls — `add` a descriptor, `modify` its read/write
+interest, `wait` for whatever is ready — and the backend is chosen at compile
+time:
+
+| Platform | Backend | Why |
+| --- | --- | --- |
+| macOS, FreeBSD, NetBSD, OpenBSD, DragonFly | `kqueue` | interest lives in the kernel; read and write are separate filters |
+| Linux | `epoll` | interest lives in the kernel; one registration carries both |
+| anything else, or `-DTCPTAP_FORCE_POLL=ON` | `poll()` | POSIX, so it builds everywhere |
+
+`poll()` hands the kernel the whole descriptor list on every wait; the other
+two register interest once and change it only when it changes, which is what
+lets them scale. All three report a hang-up or socket error as both readable
+and writable, so the relay meets it in its next `recv` or `send` the same way
+on every platform. CI builds and tests each one on a platform that selects it,
+with `poll()` forced on Linux because nothing here picks it on its own.
 
 **2. Half-closes must be forwarded, not swallowed.** TCP connections close one
 direction at a time. When the client stops writing, the proxy gets a `recv` of
@@ -108,7 +126,7 @@ by latency.
 | Build | CMake ≥ 3.20 + Ninja | The de-facto C++ build stack; one interface target carries all warning policy |
 | Test | CTest driving real processes over real sockets | Integration-testing network code without mocking the thing under test |
 | Correctness | `-Werror -Wconversion -Wshadow`, ASan, UBSan, clang-tidy | Where C++ memory safety is won or lost |
-| Portability | gcc + clang on Ubuntu in CI, developed on macOS | `SO_NOSIGPIPE` vs `MSG_NOSIGNAL`, `kqueue` vs `epoll` — the BSD/Linux split is real |
+| Portability | gcc + clang on Ubuntu and clang on macOS in CI, developed on macOS | `SO_NOSIGPIPE` vs `MSG_NOSIGNAL`, `kqueue` vs `epoll` — the BSD/Linux split is real |
 | Inspection | `tcpdump`, Wireshark, `nc`, `curl -v`, `iperf3` | Generating and reading traffic to check the tool against reality |
 
 ### Tools worth having alongside it
