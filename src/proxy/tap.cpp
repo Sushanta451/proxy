@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -127,6 +128,21 @@ bool parse_port(const char* text, uint16_t& out)
         return false;
     }
     out = static_cast<uint16_t>(value);
+    return true;
+}
+
+// A seed is any 32-bit unsigned value. strtoul would quietly accept "-1" and
+// leading spaces, so the first character has to be a digit.
+bool parse_seed(const char* text, std::uint32_t& out)
+{
+    char* end{nullptr};
+    errno = 0;
+    unsigned long value{std::strtoul(text, &end, 10)};
+    if (*text < '0' || *text > '9' || errno != 0 || *end != '\0' || value > 0xffffffffUL)
+    {
+        return false;
+    }
+    out = static_cast<std::uint32_t>(value);
     return true;
 }
 
@@ -332,8 +348,14 @@ bool wants_read(const Direction& d)
 // Relay until both directions have closed. The two halves are tracked
 // separately because TCP lets one end stop writing while the other keeps going:
 // a client that has finished its request still needs the response to come back.
-bool relay(int down, int up)
+bool relay(int down, int up, std::uint32_t seed)
 {
+    // Every random decision a fault makes comes from this one generator, so a
+    // run is reproduced exactly by passing the logged seed back with --seed.
+    // Each connection starts from the same seed. Nothing draws from it yet; the
+    // faults on the roadmap will.
+    [[maybe_unused]] std::mt19937 rng{seed};
+
     Direction to_upstream{down, up, "c>u"};
     Direction to_downstream{up, down, "u>c"};
 
@@ -384,8 +406,8 @@ bool relay(int down, int up)
 // completion. Owns `down` and closes it on every path. A failure here is about
 // this connection only; the listener is still good, so the caller decides
 // whether to carry on.
-bool serve_one(int down, const sockaddr_in& peer, const std::string& upstream_host,
-               const std::string& upstream_port)
+bool serve_one(int down, const sockaddr_in& peer, std::uint32_t seed,
+               const std::string& upstream_host, const std::string& upstream_port)
 {
     char peer_text[INET_ADDRSTRLEN]{};
     if (inet_ntop(AF_INET, &peer.sin_addr, peer_text, sizeof(peer_text)) == nullptr)
@@ -413,7 +435,7 @@ bool serve_one(int down, const sockaddr_in& peer, const std::string& upstream_ho
         return false;
     }
 
-    bool relayed{relay(down, up)};
+    bool relayed{relay(down, up, seed)};
 
     if (close(down) == -1)
     {
@@ -464,12 +486,14 @@ bool install_reaper()
 
 void usage()
 {
-    std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once]\n"
+    std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
               << "\n"
               << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
               << "and relays bytes between them, logging every chunk and its\n"
               << "direction (c>u downstream-to-upstream, u>c the other way).\n"
-              << "--once serves a single connection, then exits.\n";
+              << "--once serves a single connection, then exits.\n"
+              << "--seed N seeds the fault RNG (0..4294967295); without it one is drawn\n"
+              << "at random. The seed in use is logged either way, to replay a run.\n";
 }
 
 } // namespace
@@ -480,6 +504,8 @@ int main(int argc, char* argv[])
     std::string upstream_host;
     std::string upstream_port;
     bool once{false};
+    bool seeded{false};
+    std::uint32_t seed{0};
 
     for (int i = 1; i < argc; ++i)
     {
@@ -501,6 +527,15 @@ int main(int argc, char* argv[])
                 std::cerr << "error: --upstream wants <host>:<port>\n";
                 return 1;
             }
+        }
+        else if (flag == "--seed" && has_value)
+        {
+            if (!parse_seed(argv[++i], seed))
+            {
+                std::cerr << "error: --seed wants an integer in 0..4294967295\n";
+                return 1;
+            }
+            seeded = true;
         }
         else if (flag == "--once")
         {
@@ -524,6 +559,14 @@ int main(int argc, char* argv[])
         usage();
         return 1;
     }
+
+    // Without --seed the run is still reproducible after the fact: the drawn
+    // seed is logged like a given one.
+    if (!seeded)
+    {
+        seed = std::random_device{}();
+    }
+    std::cout << "seed " << seed << (seeded ? "" : " (random)") << std::endl;
 
     int listen_fd{listen_on(listen_port)};
     if (listen_fd == -1)
@@ -560,7 +603,7 @@ int main(int argc, char* argv[])
         // this process and decides the exit status.
         if (once)
         {
-            ok = serve_one(down, peer, upstream_host, upstream_port);
+            ok = serve_one(down, peer, seed, upstream_host, upstream_port);
             break;
         }
 
@@ -582,7 +625,7 @@ int main(int argc, char* argv[])
             // The child never accepts, so it lets go of the listener. A failed
             // connection is reported in the child's exit status, not the run's.
             close(listen_fd);
-            bool served{serve_one(down, peer, upstream_host, upstream_port)};
+            bool served{serve_one(down, peer, seed, upstream_host, upstream_port)};
             // _exit skips the stdio teardown, so flush what the relay printed.
             std::cout.flush();
             _exit(served ? 0 : 1);
