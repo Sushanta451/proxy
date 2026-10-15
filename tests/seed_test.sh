@@ -37,7 +37,8 @@ seed_line() {
     [ "${tries}" -gt 0 ] || fail "proxy never came up with: $*"
     sleep 0.1
   done
-  kill "${tap_pid}" && wait "${tap_pid}" 2>/dev/null || true
+  kill "${tap_pid}" 2>/dev/null || true
+  wait "${tap_pid}" 2>/dev/null || true
   tap_pid=""
   grep '^seed ' "${work}/tap.log" || true
 }
