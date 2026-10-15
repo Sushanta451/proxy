@@ -92,4 +92,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Lint shell
-        run: shellcheck scripts/dev.sh scripts/install_hooks.sh tests/smoke_test.sh tests/refused_test.sh .githooks/commit-msg
+        run: shellcheck scripts/*.sh tests/*.sh .githooks/commit-msg

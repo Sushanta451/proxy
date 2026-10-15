@@ -24,13 +24,9 @@ cd "${repo_root}"
 
 build_dir="build"
 sources=(src/proxy/tap.cpp src/proxy/event_loop.h src/testing/echo_server.cpp src/testing/send_client.cpp)
-shell_scripts=(
-  scripts/dev.sh
-  scripts/install_hooks.sh
-  tests/smoke_test.sh
-  tests/refused_test.sh
-  .githooks/commit-msg
-)
+# Globbed rather than listed, so a new test script is linted without anyone
+# remembering to add it here — the last four were not.
+shell_scripts=(scripts/*.sh tests/*.sh .githooks/commit-msg)
 
 die() { echo "error: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
