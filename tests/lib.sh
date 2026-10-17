@@ -3,6 +3,7 @@
 #   start NAME CMD...        background CMD, log to "${work}/NAME.log"
 #   wait_for_line FILE PAT   poll FILE for PAT, ~10s timeout
 #   fail MSG...              print MSG, dump every log, exit 1
+#   "${last_pid}"            the pid `start` most recently backgrounded
 #
 # The EXIT trap below kills every pid `start` recorded and removes the work
 # dir, so a sourcing script needs no trap of its own.
@@ -10,6 +11,7 @@ set -euo pipefail
 
 work="$(mktemp -d)"
 pids=()
+last_pid=""
 
 cleanup() {
   if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi
@@ -37,5 +39,9 @@ start() {
   local name="$1"
   shift
   "$@" >"${work}/${name}.log" 2>&1 &
-  pids+=("$!")
+  # macOS's bash has no negative array indices, so a caller that needs the
+  # pid of the process it just started reads it from here, not from
+  # "${pids[-1]}".
+  last_pid="$!"
+  pids+=("${last_pid}")
 }

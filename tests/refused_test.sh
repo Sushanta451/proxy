@@ -21,7 +21,8 @@ wait_for_line "${work}/tap.log" "listening on" || fail "proxy never came up"
 "${bin_dir}/tcptap-send" "${tap_port}" "never-arrives" >"${work}/send.log" 2>&1 || true
 
 status=0
-wait "${pids[-1]}" || status=$?
+# last_pid, not pids[-1]: macOS's bash cannot index an array from the end.
+wait "${last_pid}" || status=$?
 
 [ "${status}" -ne 0 ] || fail "proxy exited 0 even though the upstream was dead"
 grep -qi "connect" "${work}/tap.log" || fail "proxy did not report the failed connect"
