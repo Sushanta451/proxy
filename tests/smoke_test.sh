@@ -20,59 +20,22 @@ tap_port="${2:?proxy port}"
 echo_port="${3:?upstream port}"
 message="${4:?message to relay}"
 
-work="$(mktemp -d)"
-echo_pid=""
-tap_pid=""
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
 
-cleanup() {
-  [ -n "${tap_pid}" ] && kill "${tap_pid}" 2>/dev/null
-  [ -n "${echo_pid}" ] && kill "${echo_pid}" 2>/dev/null
-  rm -rf "${work}"
-  return 0
-}
-trap cleanup EXIT
+start echo "${bin_dir}/tcptap-echo" "${echo_port}"
+echo_pid="${last_pid}"
+wait_for_line "${work}/echo.log" "echo listening" || fail "upstream never came up"
 
-fail() {
-  echo "FAIL: $*" >&2
-  for log in echo tap send; do
-    if [ -f "${work}/${log}.log" ]; then
-      echo "--- ${log} ---" >&2
-      cat "${work}/${log}.log" >&2
-    fi
-  done
-  exit 1
-}
-
-# Wait for a flushed startup line instead of probing the port. A probe
-# connection would be swallowed by the single accept() these programs make.
-wait_for() {
-  local file="$1" pattern="$2" tries=100
-  while [ "${tries}" -gt 0 ]; do
-    if [ -f "${file}" ] && grep -q "${pattern}" "${file}" 2>/dev/null; then
-      return 0
-    fi
-    sleep 0.1
-    tries=$((tries - 1))
-  done
-  return 1
-}
-
-"${bin_dir}/tcptap-echo" "${echo_port}" >"${work}/echo.log" 2>&1 &
-echo_pid=$!
-wait_for "${work}/echo.log" "echo listening" || fail "upstream never came up"
-
-"${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}" --once \
-  >"${work}/tap.log" 2>&1 &
-tap_pid=$!
-wait_for "${work}/tap.log" "listening on" || fail "proxy never came up"
+start tap "${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}" --once
+tap_pid="${last_pid}"
+wait_for_line "${work}/tap.log" "listening on" || fail "proxy never came up"
 
 "${bin_dir}/tcptap-send" "${tap_port}" "${message}" >"${work}/send.log" 2>&1 \
   || fail "client exited non-zero"
 
 wait "${tap_pid}" || fail "proxy exited non-zero"
-tap_pid=""
 wait "${echo_pid}" || fail "upstream exited non-zero"
-echo_pid=""
 
 size="${#message}"
 
