@@ -82,6 +82,11 @@ on each `send` instead. The `kSendFlags` / `suppress_sigpipe` pair in every
 source file shows the pattern — guard a platform option with `#ifdef` and
 provide the other platform's equivalent. A macOS-only symbol fails the build.
 
+The same caution applies to the test scripts: macOS ships bash 3.2, which has
+no negative array indices. `tests/lib.sh`'s `start` helper leaves the pid of
+the process it just backgrounded in `last_pid`, so a test reads that instead
+of reaching for `"${pids[-1]}"`.
+
 The event-loop backends follow a stricter version of the same rule. Each one
 lives in `src/proxy/event_loop.h` under one branch of a single
 `#if`/`#elif` chain keyed on the platform macro (`__APPLE__` and the BSDs for

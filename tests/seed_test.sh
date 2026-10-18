@@ -18,8 +18,9 @@ source "$(dirname "$0")/lib.sh"
 seed_line() {
   start tap "${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${upstream_port}" "$@"
   wait_for_line "${work}/tap.log" "listening on" || fail "proxy never came up with: $*"
-  kill "${pids[-1]}" 2>/dev/null || true
-  wait "${pids[-1]}" 2>/dev/null || true
+  # last_pid, not pids[-1]: macOS's bash cannot index an array from the end.
+  kill "${last_pid}" 2>/dev/null || true
+  wait "${last_pid}" 2>/dev/null || true
   grep '^seed ' "${work}/tap.log" || true
 }
 
