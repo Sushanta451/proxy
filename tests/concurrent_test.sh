@@ -11,32 +11,9 @@ bin_dir="${1:?binary directory}"
 tap_port="${2:?proxy port}"
 echo_port="${3:?upstream port}"
 
-work="$(mktemp -d)"
-pids=()
-cleanup() {
-  exec 3>&- 2>/dev/null || true
-  # Some of these have usually exited already; kill failing on them is not an
-  # error, and under set -e it would turn a passing run into a failure.
-  if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi
-  rm -rf "${work}"
-  return 0
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $*" >&2
-  cat "${work}"/*.log >&2
-  exit 1
-}
-
-wait_for() {
-  local tries=100
-  until grep -q "$2" "$1" 2>/dev/null; do
-    tries=$((tries - 1))
-    [ "${tries}" -gt 0 ] || return 1
-    sleep 0.1
-  done
-}
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
+trap 'exec 3>&- 2>/dev/null || true; cleanup' EXIT
 
 # Send on A and expect exactly those bytes back, nothing of B's mixed in.
 echo_on_a() {
@@ -46,20 +23,16 @@ echo_on_a() {
   [ "${reply}" = "$1" ] || fail "connection A got [${reply}], wanted [$1]"
 }
 
-"${bin_dir}/tcptap-echo" "${echo_port}" >"${work}/echo-a.log" 2>&1 &
-pids+=($!)
-wait_for "${work}/echo-a.log" "echo listening" || fail "first upstream never came up"
-"${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}" \
-  >"${work}/tap.log" 2>&1 &
-pids+=($!)
-wait_for "${work}/tap.log" "listening on" || fail "proxy never came up"
+start echo-a "${bin_dir}/tcptap-echo" "${echo_port}"
+wait_for_line "${work}/echo-a.log" "echo listening" || fail "first upstream never came up"
+start tap "${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}"
+wait_for_line "${work}/tap.log" "listening on" || fail "proxy never came up"
 
 exec 3<>"/dev/tcp/127.0.0.1/${tap_port}"
 echo_on_a "held-open-before"
 
-"${bin_dir}/tcptap-echo" "${echo_port}" >"${work}/echo-b.log" 2>&1 &
-pids+=($!)
-wait_for "${work}/echo-b.log" "echo listening" || fail "second upstream never came up"
+start echo-b "${bin_dir}/tcptap-echo" "${echo_port}"
+wait_for_line "${work}/echo-b.log" "echo listening" || fail "second upstream never came up"
 # Bounded rather than left to ctest's timeout, so a serial proxy fails here
 # with a reason and the cleanup still kills everything this script started.
 "${bin_dir}/tcptap-send" "${tap_port}" "while-a-is-open" >"${work}/send.log" 2>&1 &
