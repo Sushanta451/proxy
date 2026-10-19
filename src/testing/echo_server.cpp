@@ -124,9 +124,13 @@ int main(int argc, char* argv[])
         close(listen_fd);
         return 1;
     }
-    close(listen_fd);
-
     bool ok{true};
+    if (close(listen_fd) == -1)
+    {
+        std::cerr << "close(listener): " << std::strerror(errno) << '\n';
+        ok = false;
+    }
+
     char buf[kBufferSize];
     while (true)
     {
