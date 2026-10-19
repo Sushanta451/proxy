@@ -12,44 +12,19 @@ bin_dir="${1:?binary directory}"
 tap_port="${2:?proxy port}"
 echo_port="${3:?upstream port}"
 
-work="$(mktemp -d)"
-pids=()
-cleanup() {
-  exec 3>&- 2>/dev/null || true
-  # Some of these have usually exited already; kill failing on them is not an
-  # error, and under set -e it would turn a passing run into a failure.
-  if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi
-  rm -rf "${work}"
-  return 0
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $*" >&2
-  tail -n 5 "${work}"/*.log >&2
-  exit 1
-}
-
-wait_for() {
-  local tries=100
-  until grep -q "$2" "$1" 2>/dev/null; do
-    tries=$((tries - 1))
-    [ "${tries}" -gt 0 ] || return 1
-    sleep 0.1
-  done
-}
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
+trap 'exec 3>&- 2>/dev/null || true; cleanup' EXIT
 
 seq -w 1 250000 | tr -d '\n' >"${work}/payload"
 size="$(wc -c <"${work}/payload" | tr -d ' ')"
 
-"${bin_dir}/tcptap-echo" "${echo_port}" >"${work}/echo.log" 2>&1 &
-pids+=($!)
-wait_for "${work}/echo.log" "echo listening" || fail "upstream never came up"
-"${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}" --once \
-  >"${work}/tap.log" 2>&1 &
-tap_pid=$!
-pids+=("${tap_pid}")
-wait_for "${work}/tap.log" "listening on" || fail "proxy never came up"
+start echo "${bin_dir}/tcptap-echo" "${echo_port}"
+wait_for_line "${work}/echo.log" "echo listening" || fail "upstream never came up"
+start tap "${bin_dir}/tcptap" --listen "${tap_port}" --upstream "127.0.0.1:${echo_port}" --once
+wait_for_line "${work}/tap.log" "listening on" || fail "proxy never came up"
+# last_pid, not pids[-1]: macOS's bash cannot index an array from the end.
+tap_pid="${last_pid}"
 
 exec 3<>"/dev/tcp/127.0.0.1/${tap_port}"
 cat "${work}/payload" >&3 &
