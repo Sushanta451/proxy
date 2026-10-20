@@ -145,6 +145,16 @@ cmd_fmt() {
   fi
 }
 
+# The README says, in one fixed line, that most of the code comes from an AI
+# coding agent working from a plan. It is easy to lose in a README rewrite, so
+# the gate checks for it word for word rather than trusting anyone to remember.
+ai_note="Most of this code is written by an AI coding agent from a plan I maintain."
+
+check_ai_note() {
+  grep -qF "${ai_note}" README.md || die "README.md lost its AI-authorship line: ${ai_note}"
+  echo "readme: AI-authorship line present"
+}
+
 # Everything the GitHub workflow runs. With --strict a missing tool is a failure
 # rather than a skip: the unattended committer gates on this, and a gate that
 # quietly checks less than CI does is not a gate.
@@ -161,6 +171,7 @@ cmd_ci() {
 
   cmd_build --werror
   ctest --test-dir "${build_dir}" --output-on-failure
+  check_ai_note
   if require clang-format "brew install clang-format"; then cmd_fmt --check; fi
   if require shellcheck "brew install shellcheck"; then shellcheck "${shell_scripts[@]}"; fi
   echo
