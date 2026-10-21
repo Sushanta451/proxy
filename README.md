@@ -8,6 +8,8 @@ programs on either end can be tested against a network that misbehaves.
 No frameworks and no dependencies. Every networking library is a wrapper around
 the same dozen system calls; here the syscalls are the point.
 
+Most of this code is written by an AI coding agent from a plan I maintain.
+
 ```
 $ ./scripts/dev.sh demo
 --- upstream ---

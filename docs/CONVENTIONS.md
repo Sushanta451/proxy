@@ -63,6 +63,9 @@ there first.
   it is earns its place; one restating what the next line obviously does does
   not.
 - Formatting is `clang-format`'s problem, not yours: `./scripts/dev.sh fmt`.
+- The README's line saying the code is mostly written by an AI coding agent
+  stays word for word through any rewrite; `./scripts/dev.sh ci` fails without
+  it.
 
 ## Security
 
