@@ -67,8 +67,12 @@ bool suppress_sigpipe(int fd)
 }
 
 // From here on the relay never wants a call to block: a recv or send that would
-// have to wait reports EAGAIN, and poll() decides when to try again. Read the
-// existing flags first so setting O_NONBLOCK does not clear the others.
+// have to wait reports EAGAIN instead, and the event loop (event_loop.h) decides
+// when to try the call again. It waits on each descriptor's kWantRead/kWantWrite
+// interest and reports a Ready entry once the backend says the call would go
+// through, whether that backend is kqueue, epoll, or the portable fallback
+// everywhere else. Read the existing flags first so setting O_NONBLOCK does
+// not clear the others.
 bool set_nonblocking(int fd)
 {
     int flags{fcntl(fd, F_GETFL)};
@@ -243,9 +247,10 @@ int dial(const std::string& host, const std::string& port)
 
 // One direction of the relay: bytes read from `from` and written to `to`.
 // `pending` holds what has been read but not yet accepted by `to`, up to
-// kHighWaterBytes. A send that
-// takes only part of a chunk leaves the rest here rather than spinning on it,
-// and poll() says when `to` has room again.
+// kHighWaterBytes. A send that takes only part of a chunk leaves the rest
+// here rather than spinning on it, and the event loop says when `to` has
+// room again: once a `Ready` entry for `to` comes back writable, the next
+// flush() picks the pending bytes back up where it left off.
 struct Direction
 {
     Direction(int from_fd, int to_fd, const char* label) : from{from_fd}, to{to_fd}, arrow{label}
@@ -306,8 +311,11 @@ bool read_side(Direction& d)
     if (received == -1)
     {
         // EINTR: interrupted before any data arrived. EAGAIN: on a non-blocking
-        // socket, a fourth outcome distinct from an error and from an EOF; poll()
-        // readiness can be stale by the time recv runs. Either way, poll again.
+        // socket, a fourth outcome distinct from an error and from an EOF; the
+        // event loop's readable Ready entry can be stale by the time recv
+        // actually runs, since another event on the same wait() may have
+        // already drained what was there. Either way, loop back and wait
+        // again rather than treating it as a failure.
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
         {
             return true;
