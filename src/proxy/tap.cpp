@@ -398,7 +398,10 @@ bool relay(int down, int up, std::uint32_t seed)
             {
                 return false;
             }
-            if (r.readable && wants_read(feeds) && !read_side(feeds))
+            // epoll reports EPOLLERR/EPOLLHUP even at zero interest, so a reset
+            // on a fully throttled direction needs r.writable (trouble sets it
+            // too) to force the read past wants_read's backpressure gate.
+            if (r.readable && (wants_read(feeds) || r.writable) && !read_side(feeds))
             {
                 return false;
             }
