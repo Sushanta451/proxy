@@ -70,11 +70,22 @@ jobs:
       - name: Test
         run: ctest --test-dir build-asan --output-on-failure
 
-  # There is deliberately no clang-tidy job yet. Every check here is one that
-  # `./scripts/dev.sh ci --strict` can also run locally, so nothing lands that
-  # the pre-commit gate was unable to see. clang-tidy needs Homebrew's llvm on
+  # There is deliberately no clang-tidy job yet. `./scripts/dev.sh ci --strict`
+  # does not cover every job above, and that is expected rather than a gap to
+  # close: a machine builds only the backend its own platform selects (plus
+  # `poll()` with `-DTCPTAP_FORCE_POLL=ON`). On the Linux machine that runs
+  # the gate, that is `build (gcc)`, `build (clang)`, and
+  # `build (gcc, poll() fallback)`, which together cover the `epoll` and
+  # `poll()` backends. `build (macOS clang)` selects `kqueue` instead, which
+  # nothing on this machine can build, so that job is CI-only; a change to
+  # the kqueue backend should be built there before it is relied on. The
+  # sanitizer, format and shellcheck jobs below are platform-agnostic, so the
+  # local gate does cover those in full. clang-tidy needs Homebrew's llvm on
   # the dev machine; it gets wired in once that is installed, rather than
-  # standing here as a check the local gate cannot see.
+  # standing here as a check the local gate cannot see. `docs/CONVENTIONS.md`'s
+  # CI section states the same distinction for human contributors reading this
+  # repo outside CI, and this comment should keep matching it rather than
+  # drift back to claiming every job here runs locally.
 
   format:
     name: clang-format
