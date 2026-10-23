@@ -95,7 +95,12 @@ jobs:
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
       - name: Check formatting
-        run: clang-format --dry-run --Werror src/proxy/tap.cpp src/proxy/event_loop.h src/testing/echo_server.cpp src/testing/send_client.cpp
+        # The same files `dev.sh fmt --check` formats locally: every tracked
+        # .cpp/.h, not a list kept here by hand and liable to miss a new one.
+        run: |
+          mapfile -t sources < <(git ls-files '*.cpp' '*.h')
+          [ "${#sources[@]}" -gt 0 ] || { echo "no .cpp/.h files found" >&2; exit 1; }
+          clang-format --dry-run --Werror "${sources[@]}"
 
   shellcheck:
     name: shellcheck

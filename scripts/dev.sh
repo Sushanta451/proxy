@@ -23,13 +23,24 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 build_dir="build"
-sources=(src/proxy/tap.cpp src/proxy/event_loop.h src/testing/echo_server.cpp src/testing/send_client.cpp)
-# Globbed rather than listed, so a new test script is linted without anyone
-# remembering to add it here — the last four were not.
-shell_scripts=(scripts/*.sh tests/*.sh .githooks/commit-msg)
 
 die() { echo "error: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# From git rather than hand-kept, so a new header or source file is formatted
+# and linted without anyone remembering to add it here, the same reason the
+# shell scripts below are globbed rather than listed. The CI workflow's own
+# format job reads the same tracked files, the same way, so the two cannot
+# drift apart again. A plain `read` loop rather than `mapfile`, which bash 3.2
+# on macOS does not have.
+sources=()
+while IFS= read -r file; do
+  sources+=("${file}")
+done < <(git ls-files '*.cpp' '*.h')
+[ "${#sources[@]}" -gt 0 ] || die "git ls-files found no .cpp/.h files"
+# Globbed rather than listed, so a new test script is linted without anyone
+# remembering to add it here — the last four were not.
+shell_scripts=(scripts/*.sh tests/*.sh .githooks/commit-msg)
 
 generator() {
   if have ninja; then echo "Ninja"; else echo "Unix Makefiles"; fi
