@@ -3,6 +3,10 @@
 // Accepts one connection on loopback, echoes every chunk straight back, and
 // exits when the peer stops writing. Deliberately boring: when a test fails we
 // want to be looking at the proxy, not at the thing behind it.
+//
+// --burst-reset is the exception: it floods the connection and never reads,
+// so killing it leaves the client's bytes unread and turns the close into a
+// reset for reset_test.sh.
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -14,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
 #include <string_view>
 
 namespace
@@ -64,9 +69,15 @@ bool parse_port(const char* text, uint16_t& out)
 
 int main(int argc, char* argv[])
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::cerr << "usage: tcptap-echo <port>\n";
+        std::cerr << "usage: tcptap-echo <port> [--burst-reset]\n";
+        return 1;
+    }
+    bool burst_reset{argc == 3 && std::string_view(argv[2]) == "--burst-reset"};
+    if (argc == 3 && !burst_reset)
+    {
+        std::cerr << "usage: tcptap-echo <port> [--burst-reset]\n";
         return 1;
     }
 
@@ -129,6 +140,17 @@ int main(int argc, char* argv[])
     {
         std::cerr << "close(listener): " << std::strerror(errno) << '\n';
         ok = false;
+    }
+
+    if (burst_reset)
+    {
+        std::cout << "echo accepted" << std::endl;
+        // Far past the proxy's 64 KiB high-water mark; nothing reads it back,
+        // so this send() blocks forever until killed.
+        std::string filler(64 * 1024 * 1024, 'x');
+        send_all(conn, filler.data(), filler.size());
+        close(conn);
+        return 1;
     }
 
     char buf[kBufferSize];
