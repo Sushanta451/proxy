@@ -23,6 +23,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 build_dir="build"
+
+die() { echo "error: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
 # From git rather than hand-kept, so a new header or source file is formatted
 # and linted without anyone remembering to add it here, the same reason the
 # shell scripts below are globbed rather than listed. The CI workflow's own
@@ -37,9 +41,6 @@ done < <(git ls-files '*.cpp' '*.h')
 # Globbed rather than listed, so a new test script is linted without anyone
 # remembering to add it here — the last four were not.
 shell_scripts=(scripts/*.sh tests/*.sh .githooks/commit-msg)
-
-die() { echo "error: $*" >&2; exit 1; }
-have() { command -v "$1" >/dev/null 2>&1; }
 
 generator() {
   if have ninja; then echo "Ninja"; else echo "Unix Makefiles"; fi
