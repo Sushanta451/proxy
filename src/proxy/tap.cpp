@@ -36,10 +36,8 @@ using tcptap::EventLoop;
 using tcptap::kWantRead;
 using tcptap::kWantWrite;
 using tcptap::Options;
-using tcptap::parse_port;
-using tcptap::parse_seed;
+using tcptap::parse_args;
 using tcptap::Ready;
-using tcptap::split_upstream;
 
 // A write to a peer that has already gone away raises SIGPIPE, which would kill
 // the proxy mid-relay. The two platforms disagree about where the suppression
@@ -457,74 +455,13 @@ bool install_reaper()
     return true;
 }
 
-void usage()
-{
-    std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
-              << "\n"
-              << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
-              << "and relays bytes between them, logging every chunk and its\n"
-              << "direction (c>u downstream-to-upstream, u>c the other way).\n"
-              << "--once serves a single connection, then exits.\n"
-              << "--seed N seeds the fault RNG (0..4294967295); without it one is drawn\n"
-              << "at random. The seed in use is logged either way, to replay a run.\n";
-}
-
 } // namespace
 
 int main(int argc, char* argv[])
 {
     Options opts;
-
-    for (int i = 1; i < argc; ++i)
+    if (!parse_args(argc, argv, opts))
     {
-        std::string_view flag{argv[i]};
-        bool has_value{i + 1 < argc};
-
-        if (flag == "--listen" && has_value)
-        {
-            if (!parse_port(argv[++i], opts.listen_port))
-            {
-                std::cerr << "error: --listen wants a port in 1..65535\n";
-                return 1;
-            }
-        }
-        else if (flag == "--upstream" && has_value)
-        {
-            if (!split_upstream(argv[++i], opts.upstream_host, opts.upstream_port))
-            {
-                std::cerr << "error: --upstream wants <host>:<port>\n";
-                return 1;
-            }
-        }
-        else if (flag == "--seed" && has_value)
-        {
-            if (!parse_seed(argv[++i], opts.seed))
-            {
-                std::cerr << "error: --seed wants an integer in 0..4294967295\n";
-                return 1;
-            }
-            opts.seeded = true;
-        }
-        else if (flag == "--once")
-        {
-            opts.once = true;
-        }
-        else if (flag == "--help" || flag == "-h")
-        {
-            usage();
-            return 0;
-        }
-        else
-        {
-            std::cerr << "error: unexpected argument: " << flag << '\n';
-            usage();
-            return 1;
-        }
-    }
-
-    if (opts.listen_port == 0 || opts.upstream_host.empty())
-    {
-        usage();
         return 1;
     }
 

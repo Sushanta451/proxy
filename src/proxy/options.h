@@ -7,14 +7,15 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <iostream>
 #include <string>
+#include <string_view>
 
 namespace tcptap
 {
 
 // Everything a run needs, gathered in one place instead of a parameter list
-// that grows with every flag. parse_args (ROADMAP) will fill this directly;
-// for now main still does the filling.
+// that grows with every flag. parse_args fills it directly; main just reads it.
 struct Options
 {
     uint16_t listen_port{0};
@@ -64,6 +65,78 @@ inline bool split_upstream(const std::string& spec, std::string& host, std::stri
     }
     host = spec.substr(0, colon);
     port = spec.substr(colon + 1);
+    return true;
+}
+
+inline void usage()
+{
+    std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
+              << "\n"
+              << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
+              << "and relays bytes between them, logging every chunk and its\n"
+              << "direction (c>u downstream-to-upstream, u>c the other way).\n"
+              << "--once serves a single connection, then exits.\n"
+              << "--seed N seeds the fault RNG (0..4294967295); without it one is drawn\n"
+              << "at random. The seed in use is logged either way, to replay a run.\n";
+}
+
+// Fills *out* from argv, printing any complaint (and the usage banner) to
+// stderr itself; the caller's only job on failure is to return 1.
+inline bool parse_args(int argc, char* argv[], Options& out)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string_view flag{argv[i]};
+        bool has_value{i + 1 < argc};
+
+        if (flag == "--listen" && has_value)
+        {
+            if (!parse_port(argv[++i], out.listen_port))
+            {
+                std::cerr << "error: --listen wants a port in 1..65535\n";
+                return false;
+            }
+        }
+        else if (flag == "--upstream" && has_value)
+        {
+            if (!split_upstream(argv[++i], out.upstream_host, out.upstream_port))
+            {
+                std::cerr << "error: --upstream wants <host>:<port>\n";
+                return false;
+            }
+        }
+        else if (flag == "--seed" && has_value)
+        {
+            if (!parse_seed(argv[++i], out.seed))
+            {
+                std::cerr << "error: --seed wants an integer in 0..4294967295\n";
+                return false;
+            }
+            out.seeded = true;
+        }
+        else if (flag == "--once")
+        {
+            out.once = true;
+        }
+        else if (flag == "--help" || flag == "-h")
+        {
+            usage();
+            return false;
+        }
+        else
+        {
+            std::cerr << "error: unexpected argument: " << flag << '\n';
+            usage();
+            return false;
+        }
+    }
+
+    if (out.listen_port == 0 || out.upstream_host.empty())
+    {
+        usage();
+        return false;
+    }
+
     return true;
 }
 
