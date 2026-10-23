@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "event_loop.h"
+#include "options.h"
 
 namespace
 {
@@ -34,6 +35,8 @@ namespace
 using tcptap::EventLoop;
 using tcptap::kWantRead;
 using tcptap::kWantWrite;
+using tcptap::parse_port;
+using tcptap::parse_seed;
 using tcptap::Ready;
 
 // A write to a peer that has already gone away raises SIGPIPE, which would kill
@@ -120,34 +123,6 @@ void print_preview(std::string_view bytes)
     {
         std::cout << " +" << (bytes.size() - kPreviewBytes) << " more";
     }
-}
-
-bool parse_port(const char* text, uint16_t& out)
-{
-    char* end{nullptr};
-    errno = 0;
-    unsigned long value{std::strtoul(text, &end, 10)};
-    if (errno != 0 || end == text || *end != '\0' || value == 0 || value > 65535)
-    {
-        return false;
-    }
-    out = static_cast<uint16_t>(value);
-    return true;
-}
-
-// A seed is any 32-bit unsigned value. strtoul would quietly accept "-1" and
-// leading spaces, so the first character has to be a digit.
-bool parse_seed(const char* text, std::uint32_t& out)
-{
-    char* end{nullptr};
-    errno = 0;
-    unsigned long value{std::strtoul(text, &end, 10)};
-    if (*text < '0' || *text > '9' || errno != 0 || *end != '\0' || value > 0xffffffffUL)
-    {
-        return false;
-    }
-    out = static_cast<std::uint32_t>(value);
-    return true;
 }
 
 // v1 takes host:port and splits on the last colon, which is enough for IPv4 and
