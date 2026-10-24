@@ -14,6 +14,26 @@
 namespace tcptap
 {
 
+// Which way a fault is allowed to travel. Nothing consumes this yet; it is
+// plumbed through so the fault injector added later has somewhere to read it
+// from instead of growing its own flag.
+enum class Direction
+{
+    CToU,
+    UToC,
+    Both
+};
+
+inline bool applies_to_c_to_u(Direction direction)
+{
+    return direction == Direction::CToU || direction == Direction::Both;
+}
+
+inline bool applies_to_u_to_c(Direction direction)
+{
+    return direction == Direction::UToC || direction == Direction::Both;
+}
+
 // Everything a run needs, gathered in one place instead of a parameter list
 // that grows with every flag. parse_args fills it directly; main just reads it.
 struct Options
@@ -24,6 +44,7 @@ struct Options
     bool once{false};
     bool seeded{false};
     std::uint32_t seed{0};
+    Direction direction{Direction::Both};
 };
 
 inline bool parse_port(const char* text, uint16_t& out)
@@ -68,16 +89,40 @@ inline bool split_upstream(const std::string& spec, std::string& host, std::stri
     return true;
 }
 
+inline bool parse_direction(const char* text, Direction& out)
+{
+    std::string_view value{text};
+    if (value == "c>u")
+    {
+        out = Direction::CToU;
+    }
+    else if (value == "u>c")
+    {
+        out = Direction::UToC;
+    }
+    else if (value == "both")
+    {
+        out = Direction::Both;
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
 inline void usage()
 {
     std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
+              << "              [--direction c>u|u>c|both]\n"
               << "\n"
               << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
               << "and relays bytes between them, logging every chunk and its\n"
               << "direction (c>u downstream-to-upstream, u>c the other way).\n"
               << "--once serves a single connection, then exits.\n"
               << "--seed N seeds the fault RNG (0..4294967295); without it one is drawn\n"
-              << "at random. The seed in use is logged either way, to replay a run.\n";
+              << "at random. The seed in use is logged either way, to replay a run.\n"
+              << "--direction restricts faults to one direction (default both).\n";
 }
 
 // Fills *out* from argv, printing any complaint (and the usage banner) to
@@ -113,6 +158,14 @@ inline bool parse_args(int argc, char* argv[], Options& out)
                 return false;
             }
             out.seeded = true;
+        }
+        else if (flag == "--direction" && has_value)
+        {
+            if (!parse_direction(argv[++i], out.direction))
+            {
+                std::cerr << "error: --direction wants c>u, u>c or both\n";
+                return false;
+            }
         }
         else if (flag == "--once")
         {
