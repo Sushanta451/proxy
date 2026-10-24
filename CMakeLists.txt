@@ -86,6 +86,10 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/seed_test.sh"
             "$<TARGET_FILE_DIR:tcptap>" 9170 9171)
 
+  add_test(NAME elapsed
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/elapsed_test.sh"
+            "$<TARGET_FILE_DIR:tcptap>" 9190 9191)
+
   # poll()/kqueue disable a filter at zero interest, so a reset there just
   # hangs rather than spinning; only epoll has the bug this test is for.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT TCPTAP_FORCE_POLL)
@@ -97,6 +101,6 @@ if(BUILD_TESTING)
 
   set_tests_properties(relay-short relay-longer upstream-refused
     sequential-connections concurrent-connections large-payload
-    slow-reader seed
+    slow-reader seed elapsed
     PROPERTIES TIMEOUT 30)
 endif()
