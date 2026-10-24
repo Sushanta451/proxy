@@ -43,9 +43,14 @@ target_link_libraries(tcptap-echo PRIVATE tcptap_flags)
 add_executable(tcptap-send src/testing/send_client.cpp)
 target_link_libraries(tcptap-send PRIVATE tcptap_flags)
 
+add_executable(tcptap-unit src/testing/unit_tests.cpp)
+target_link_libraries(tcptap-unit PRIVATE tcptap_flags)
+
 include(CTest)
 
 if(BUILD_TESTING)
+  add_test(NAME unit COMMAND tcptap-unit)
+
   # Every test owns its own pair of ports, so ctest -j is safe. Keep it that
   # way: a hardcoded shared port means tests that cannot run concurrently.
   add_test(NAME relay-short
