@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -108,6 +109,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    auto start{std::chrono::steady_clock::now()};
     if (connect(fd, reinterpret_cast<sockaddr*>(&addr), static_cast<socklen_t>(sizeof(addr))) == -1)
     {
         std::cerr << "connect(127.0.0.1:" << port << "): " << std::strerror(errno) << '\n';
@@ -155,7 +157,10 @@ int main(int argc, char* argv[])
 
     if (ok)
     {
+        auto elapsed{std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start)};
         std::cout << "got " << reply.size() << " bytes [" << reply << ']' << std::endl;
+        std::cout << "elapsed " << elapsed.count() << " ms" << std::endl;
     }
 
     if (close(fd) == -1)
