@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <string>
 
 namespace
 {
@@ -35,6 +36,25 @@ int main()
     CHECK(!tcptap::parse_port("-1", port));
     CHECK(!tcptap::parse_port("", port));
     CHECK(!tcptap::parse_port("80x", port));
+    CHECK(!tcptap::parse_port("12x", port));
+
+    std::uint32_t seed{0};
+    CHECK(tcptap::parse_seed("0", seed) && seed == 0);
+    CHECK(tcptap::parse_seed("1", seed) && seed == 1);
+    CHECK(tcptap::parse_seed("4294967295", seed) && seed == 0xffffffffUL);
+    CHECK(!tcptap::parse_seed("4294967296", seed));
+    CHECK(!tcptap::parse_seed("-1", seed));
+    CHECK(!tcptap::parse_seed("", seed));
+    CHECK(!tcptap::parse_seed("12x", seed));
+
+    std::string host;
+    std::string up_port;
+    CHECK(tcptap::split_upstream("example.com:80", host, up_port) && host == "example.com" &&
+          up_port == "80");
+    CHECK(!tcptap::split_upstream(":80", host, up_port));
+    CHECK(!tcptap::split_upstream("host", host, up_port));
+    CHECK(!tcptap::split_upstream("host:", host, up_port));
+    CHECK(!tcptap::split_upstream("", host, up_port));
 
     if (g_failures != 0)
     {
