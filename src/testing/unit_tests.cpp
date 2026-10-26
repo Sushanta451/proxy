@@ -4,6 +4,7 @@
 // project is to not reach for a wrapper around something small. CHECK records
 // the failing file:line and keeps going; main exits non-zero if any fired.
 
+#include "../proxy/faults.h"
 #include "../proxy/options.h"
 
 #include <cstdint>
