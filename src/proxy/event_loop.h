@@ -116,11 +116,17 @@ class EventLoop
 
     // Same contract as the poll() backend. kqueue reports read and write
     // readiness as separate events, so one descriptor can appear twice.
-    bool wait(std::vector<Ready>& out)
+    // timeout_ms: -1 waits forever, 0 polls without blocking, otherwise it is
+    // the most kevent() will wait. kqueue wants a timespec, not a plain count.
+    bool wait(std::vector<Ready>& out, int timeout_ms)
     {
         out.clear();
+        struct timespec ts
+        {
+            timeout_ms / 1000, (timeout_ms % 1000) * 1000000
+        };
         struct kevent events[8];
-        int count{kevent(kq_, nullptr, 0, events, 8, nullptr)};
+        int count{kevent(kq_, nullptr, 0, events, 8, timeout_ms < 0 ? nullptr : &ts)};
         if (count == -1)
         {
             return errno == EINTR;
@@ -222,11 +228,13 @@ class EventLoop
 
     // Same contract as the other backends. EPOLLHUP and EPOLLERR are reported
     // even with an empty mask, and count as both readable and writable.
-    bool wait(std::vector<Ready>& out)
+    // timeout_ms: -1 waits forever, 0 polls without blocking, otherwise it is
+    // the most epoll_wait() will wait; it takes that count directly.
+    bool wait(std::vector<Ready>& out, int timeout_ms)
     {
         out.clear();
         epoll_event events[8];
-        int count{epoll_wait(ep_, events, 8, -1)};
+        int count{epoll_wait(ep_, events, 8, timeout_ms)};
         if (count == -1)
         {
             return errno == EINTR;
@@ -288,13 +296,15 @@ class EventLoop
         return false;
     }
 
-    // Block until at least one descriptor is ready, then report every ready one
+    // Wait for at least one descriptor to be ready, then report every ready one
     // into `out`. Returns false with errno set on failure; EINTR is not one, it
-    // just reports nothing so the caller goes round again.
-    bool wait(std::vector<Ready>& out)
+    // just reports nothing so the caller goes round again. timeout_ms: -1 waits
+    // forever, 0 polls without blocking, otherwise it is the most poll() will
+    // wait, in the units it already takes.
+    bool wait(std::vector<Ready>& out, int timeout_ms)
     {
         out.clear();
-        if (poll(fds_.data(), static_cast<nfds_t>(fds_.size()), -1) == -1)
+        if (poll(fds_.data(), static_cast<nfds_t>(fds_.size()), timeout_ms) == -1)
         {
             return errno == EINTR;
         }

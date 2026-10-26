@@ -343,8 +343,10 @@ bool relay(int down, int up, const Options& opts)
     std::vector<Ready> ready;
     while (!to_upstream.shut || !to_downstream.shut)
     {
+        // No held chunk needs a wakeup yet, so wait forever; a later step gives
+        // this a real deadline once chunks can be due in the future.
         if (!loop.modify(down, interest(to_upstream, to_downstream)) ||
-            !loop.modify(up, interest(to_downstream, to_upstream)) || !loop.wait(ready))
+            !loop.modify(up, interest(to_downstream, to_upstream)) || !loop.wait(ready, -1))
         {
             std::cerr << "event loop: " << std::strerror(errno) << '\n';
             return false;
