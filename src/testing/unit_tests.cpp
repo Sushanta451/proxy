@@ -56,19 +56,19 @@ int main()
     CHECK(!tcptap::split_upstream("host:", host, up_port));
     CHECK(!tcptap::split_upstream("", host, up_port));
 
-    tcptap::Direction direction{tcptap::Direction::Both};
-    CHECK(tcptap::parse_direction("c>u", direction) && direction == tcptap::Direction::CToU);
-    CHECK(tcptap::parse_direction("u>c", direction) && direction == tcptap::Direction::UToC);
-    CHECK(tcptap::parse_direction("both", direction) && direction == tcptap::Direction::Both);
+    tcptap::FaultDirection direction{tcptap::FaultDirection::Both};
+    CHECK(tcptap::parse_direction("c>u", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(tcptap::parse_direction("u>c", direction) && direction == tcptap::FaultDirection::UToC);
+    CHECK(tcptap::parse_direction("both", direction) && direction == tcptap::FaultDirection::Both);
     CHECK(!tcptap::parse_direction("c<u", direction));
     CHECK(!tcptap::parse_direction("", direction));
 
-    CHECK(tcptap::applies_to_c_to_u(tcptap::Direction::CToU));
-    CHECK(!tcptap::applies_to_c_to_u(tcptap::Direction::UToC));
-    CHECK(tcptap::applies_to_c_to_u(tcptap::Direction::Both));
-    CHECK(tcptap::applies_to_u_to_c(tcptap::Direction::UToC));
-    CHECK(!tcptap::applies_to_u_to_c(tcptap::Direction::CToU));
-    CHECK(tcptap::applies_to_u_to_c(tcptap::Direction::Both));
+    CHECK(tcptap::applies_to_c_to_u(tcptap::FaultDirection::CToU));
+    CHECK(!tcptap::applies_to_c_to_u(tcptap::FaultDirection::UToC));
+    CHECK(tcptap::applies_to_c_to_u(tcptap::FaultDirection::Both));
+    CHECK(tcptap::applies_to_u_to_c(tcptap::FaultDirection::UToC));
+    CHECK(!tcptap::applies_to_u_to_c(tcptap::FaultDirection::CToU));
+    CHECK(tcptap::applies_to_u_to_c(tcptap::FaultDirection::Both));
 
     if (g_failures != 0)
     {

@@ -17,21 +17,21 @@ namespace tcptap
 // Which way a fault is allowed to travel. Nothing consumes this yet; it is
 // plumbed through so the fault injector added later has somewhere to read it
 // from instead of growing its own flag.
-enum class Direction
+enum class FaultDirection
 {
     CToU,
     UToC,
     Both
 };
 
-inline bool applies_to_c_to_u(Direction direction)
+inline bool applies_to_c_to_u(FaultDirection direction)
 {
-    return direction == Direction::CToU || direction == Direction::Both;
+    return direction == FaultDirection::CToU || direction == FaultDirection::Both;
 }
 
-inline bool applies_to_u_to_c(Direction direction)
+inline bool applies_to_u_to_c(FaultDirection direction)
 {
-    return direction == Direction::UToC || direction == Direction::Both;
+    return direction == FaultDirection::UToC || direction == FaultDirection::Both;
 }
 
 // Everything a run needs, gathered in one place instead of a parameter list
@@ -45,7 +45,7 @@ struct Options
     bool seeded{false};
     bool help{false};
     std::uint32_t seed{0};
-    Direction direction{Direction::Both};
+    FaultDirection direction{FaultDirection::Both};
 };
 
 inline bool parse_port(const char* text, uint16_t& out)
@@ -90,20 +90,20 @@ inline bool split_upstream(const std::string& spec, std::string& host, std::stri
     return true;
 }
 
-inline bool parse_direction(const char* text, Direction& out)
+inline bool parse_direction(const char* text, FaultDirection& out)
 {
     std::string_view value{text};
     if (value == "c>u")
     {
-        out = Direction::CToU;
+        out = FaultDirection::CToU;
     }
     else if (value == "u>c")
     {
-        out = Direction::UToC;
+        out = FaultDirection::UToC;
     }
     else if (value == "both")
     {
-        out = Direction::Both;
+        out = FaultDirection::Both;
     }
     else
     {
