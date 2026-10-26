@@ -60,8 +60,25 @@ int main()
     CHECK(tcptap::parse_direction("c>u", direction) && direction == tcptap::FaultDirection::CToU);
     CHECK(tcptap::parse_direction("u>c", direction) && direction == tcptap::FaultDirection::UToC);
     CHECK(tcptap::parse_direction("both", direction) && direction == tcptap::FaultDirection::Both);
-    CHECK(!tcptap::parse_direction("c<u", direction));
-    CHECK(!tcptap::parse_direction("", direction));
+
+    // A rejected call must leave *out* alone: the early return happens before
+    // any assignment, and a test that ignored this could miss a future bug
+    // where a near-miss case falls through into a partial write.
+    direction = tcptap::FaultDirection::CToU;
+    CHECK(!tcptap::parse_direction("c<u", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("u<c", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("Both", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("BOTH", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("C>U", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("c>", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction(">u", direction) && direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("both ", direction) &&
+          direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction(" both", direction) &&
+          direction == tcptap::FaultDirection::CToU);
+    CHECK(!tcptap::parse_direction("bothx", direction) &&
+          direction == tcptap::FaultDirection::CToU);
 
     CHECK(tcptap::applies_to_c_to_u(tcptap::FaultDirection::CToU));
     CHECK(!tcptap::applies_to_c_to_u(tcptap::FaultDirection::UToC));
