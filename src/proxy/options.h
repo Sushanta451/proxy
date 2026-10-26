@@ -11,18 +11,10 @@
 #include <string>
 #include <string_view>
 
+#include "faults.h"
+
 namespace tcptap
 {
-
-// Which way a fault is allowed to travel. Nothing consumes this yet; it is
-// plumbed through so the fault injector added later has somewhere to read it
-// from instead of growing its own flag.
-enum class FaultDirection
-{
-    CToU,
-    UToC,
-    Both
-};
 
 inline bool applies_to_c_to_u(FaultDirection direction)
 {
@@ -42,10 +34,8 @@ struct Options
     std::string upstream_host;
     std::string upstream_port;
     bool once{false};
-    bool seeded{false};
     bool help{false};
-    std::uint32_t seed{0};
-    FaultDirection direction{FaultDirection::Both};
+    FaultConfig faults;
 };
 
 inline bool parse_port(const char* text, uint16_t& out)
@@ -153,16 +143,16 @@ inline bool parse_args(int argc, char* argv[], Options& out)
         }
         else if (flag == "--seed" && has_value)
         {
-            if (!parse_seed(argv[++i], out.seed))
+            if (!parse_seed(argv[++i], out.faults.seed))
             {
                 std::cerr << "error: --seed wants an integer in 0..4294967295\n";
                 return false;
             }
-            out.seeded = true;
+            out.faults.seeded = true;
         }
         else if (flag == "--direction" && has_value)
         {
-            if (!parse_direction(argv[++i], out.direction))
+            if (!parse_direction(argv[++i], out.faults.direction))
             {
                 std::cerr << "error: --direction wants c>u, u>c or both\n";
                 return false;

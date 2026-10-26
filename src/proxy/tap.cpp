@@ -27,12 +27,14 @@
 #include <vector>
 
 #include "event_loop.h"
+#include "faults.h"
 #include "options.h"
 
 namespace
 {
 
 using tcptap::EventLoop;
+using tcptap::FaultState;
 using tcptap::kWantRead;
 using tcptap::kWantWrite;
 using tcptap::Options;
@@ -319,11 +321,7 @@ bool wants_read(const Direction& d)
 // a client that has finished its request still needs the response to come back.
 bool relay(int down, int up, const Options& opts)
 {
-    // Every random decision a fault makes comes from this one generator, so a
-    // run is reproduced exactly by passing the logged seed back with --seed.
-    // Each connection starts from the same seed. Nothing draws from it yet; the
-    // faults on the roadmap will.
-    [[maybe_unused]] std::mt19937 rng{opts.seed};
+    [[maybe_unused]] FaultState faults{opts.faults};
 
     Direction to_upstream{down, up, "c>u"};
     Direction to_downstream{up, down, "u>c"};
@@ -473,11 +471,12 @@ int main(int argc, char* argv[])
 
     // Without --seed the run is still reproducible after the fact: the drawn
     // seed is logged like a given one.
-    if (!opts.seeded)
+    if (!opts.faults.seeded)
     {
-        opts.seed = std::random_device{}();
+        opts.faults.seed = std::random_device{}();
     }
-    std::cout << "seed " << opts.seed << (opts.seeded ? "" : " (random)") << std::endl;
+    std::cout << "seed " << opts.faults.seed << (opts.faults.seeded ? "" : " (random)")
+              << std::endl;
 
     int listen_fd{listen_on(opts.listen_port)};
     if (listen_fd == -1)
