@@ -43,6 +43,7 @@ struct Options
     std::string upstream_port;
     bool once{false};
     bool seeded{false};
+    bool help{false};
     std::uint32_t seed{0};
     Direction direction{Direction::Both};
 };
@@ -111,9 +112,9 @@ inline bool parse_direction(const char* text, Direction& out)
     return true;
 }
 
-inline void usage()
+inline void usage(std::ostream& outstream)
 {
-    std::cerr << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
+    outstream << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
               << "              [--direction c>u|u>c|both]\n"
               << "\n"
               << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
@@ -173,20 +174,21 @@ inline bool parse_args(int argc, char* argv[], Options& out)
         }
         else if (flag == "--help" || flag == "-h")
         {
-            usage();
-            return false;
+            usage(std::cout);
+            out.help = true;
+            return true;
         }
         else
         {
             std::cerr << "error: unexpected argument: " << flag << '\n';
-            usage();
+            usage(std::cerr);
             return false;
         }
     }
 
     if (out.listen_port == 0 || out.upstream_host.empty())
     {
-        usage();
+        usage(std::cerr);
         return false;
     }
 

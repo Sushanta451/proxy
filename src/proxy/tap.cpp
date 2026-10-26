@@ -464,6 +464,10 @@ int main(int argc, char* argv[])
     {
         return 1;
     }
+    if (opts.help)
+    {
+        return 0;
+    }
 
     // Without --seed the run is still reproducible after the fact: the drawn
     // seed is logged like a given one.
