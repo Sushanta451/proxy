@@ -16,10 +16,12 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <random>
 #include <iostream>
 #include <string>
@@ -208,12 +210,23 @@ int dial(const std::string& host, const std::string& port)
     return fd;
 }
 
+// A chunk read off the wire but not yet eligible to go out. `due` is always
+// now or earlier for the moment; a later step lets --delay push it into the
+// future.
+struct HeldChunk
+{
+    std::chrono::steady_clock::time_point due;
+    std::string bytes;
+};
+
 // One direction of the relay: bytes read from `from` and written to `to`.
-// `pending` holds what has been read but not yet accepted by `to`, up to
-// kHighWaterBytes. A send that takes only part of a chunk leaves the rest
-// here rather than spinning on it, and the event loop says when `to` has
-// room again: once a `Ready` entry for `to` comes back writable, the next
-// flush() picks the pending bytes back up where it left off.
+// `held` queues chunks whose due time has not arrived yet, oldest first.
+// `pending` holds what release() has let through but `to` has not yet
+// accepted, up to kHighWaterBytes between the two. A send that takes only
+// part of a chunk leaves the rest in `pending` rather than spinning on it,
+// and the event loop says when `to` has room again: once a `Ready` entry for
+// `to` comes back writable, the next flush() picks the pending bytes back up
+// where it left off.
 struct Direction
 {
     Direction(int from_fd, int to_fd, const char* label) : from{from_fd}, to{to_fd}, arrow{label}
@@ -225,9 +238,34 @@ struct Direction
     const char* arrow;
     bool reading{true}; // `from` has not sent EOF yet
     bool shut{false};   // EOF has been forwarded to `to`
+    std::deque<HeldChunk> held;
     std::string pending;
     unsigned long long relayed{0};
 };
+
+// Bytes still queued in `d.held`, counted against the high-water mark exactly
+// like `pending` so a direction cannot grow without bound just because its
+// chunks are not due yet.
+size_t held_bytes(const Direction& d)
+{
+    size_t total{0};
+    for (const HeldChunk& chunk : d.held)
+    {
+        total += chunk.bytes.size();
+    }
+    return total;
+}
+
+// Move every chunk due at or before `now` out of `held` and into `pending`,
+// oldest first, so flush() sends them in the order they arrived.
+void release(Direction& d, std::chrono::steady_clock::time_point now)
+{
+    while (!d.held.empty() && d.held.front().due <= now)
+    {
+        d.pending += d.held.front().bytes;
+        d.held.pop_front();
+    }
+}
 
 // Push as much of `pending` as `to` will take without blocking. Once the source
 // has finished and everything it sent has gone out, forward its EOF.
@@ -302,7 +340,11 @@ bool read_side(Direction& d)
     // and the tests read this log while the proxy is still alive. Flush.
     std::cout << std::endl;
 
-    d.pending.append(buf, count);
+    // Everything is due immediately for now, so this chunk clears straight
+    // back out to pending and the relay behaves exactly as before.
+    auto now{std::chrono::steady_clock::now()};
+    d.held.push_back({now, std::string(buf, count)});
+    release(d, now);
     return flush(d);
 }
 
@@ -310,10 +352,12 @@ bool read_side(Direction& d)
 // queued keeps both sockets busy, but past the high-water mark the source is
 // left unread: its bytes back up in the kernel, TCP's window closes, and a slow
 // reader ends up slowing the sender instead of growing this buffer without limit.
-// One recv can overshoot the mark by at most a buffer's worth.
+// `held` counts too, since a chunk sitting there for a future due time still
+// occupies the same memory `pending` would. One recv can overshoot the mark by
+// at most a buffer's worth.
 bool wants_read(const Direction& d)
 {
-    return d.reading && d.pending.size() < kHighWaterBytes;
+    return d.reading && d.pending.size() + held_bytes(d) < kHighWaterBytes;
 }
 
 // Relay until both directions have closed. The two halves are tracked
