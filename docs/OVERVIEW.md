@@ -69,7 +69,10 @@ direction at a time. When the client stops writing, the proxy gets a `recv` of
 `0` — and the naive move is to tear the pair down. That is wrong, and it breaks
 every protocol where the client says "I'm done asking" and then waits for a
 large reply. The correct move is `shutdown(upstream, SHUT_WR)`: pass the EOF
-along and keep relaying the other direction until it closes too.
+along and keep relaying the other direction until it closes too. The EOF has
+to wait its turn behind every byte that arrived ahead of it, including one
+still held for a future `--delay`: forward it too soon and the relay cuts off
+its own tail.
 
 **3. Backpressure is not optional.** If the upstream reads slower than the
 client writes, bytes pile up somewhere. `send()` starts returning short counts,
