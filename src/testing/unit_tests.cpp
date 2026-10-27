@@ -48,6 +48,15 @@ int main()
     CHECK(!tcptap::parse_seed("", seed));
     CHECK(!tcptap::parse_seed("12x", seed));
 
+    std::uint32_t ms{0};
+    CHECK(tcptap::parse_ms("0", ms) && ms == 0);
+    CHECK(tcptap::parse_ms("1", ms) && ms == 1);
+    CHECK(tcptap::parse_ms("600000", ms) && ms == 600000);
+    CHECK(!tcptap::parse_ms("600001", ms));
+    CHECK(!tcptap::parse_ms("-1", ms));
+    CHECK(!tcptap::parse_ms("", ms));
+    CHECK(!tcptap::parse_ms("12x", ms));
+
     std::string host;
     std::string up_port;
     CHECK(tcptap::split_upstream("example.com:80", host, up_port) && host == "example.com" &&

@@ -66,6 +66,23 @@ inline bool parse_seed(const char* text, std::uint32_t& out)
     return true;
 }
 
+// A duration in milliseconds for the timing flags (--delay, --jitter). Like
+// parse_seed, strtoul would quietly accept "-1" and leading spaces, so the
+// first character has to be a digit; capped at 600000 (10 minutes), past
+// which a flag is almost certainly a typo rather than an intended delay.
+inline bool parse_ms(const char* text, std::uint32_t& out)
+{
+    char* end{nullptr};
+    errno = 0;
+    unsigned long value{std::strtoul(text, &end, 10)};
+    if (*text < '0' || *text > '9' || errno != 0 || *end != '\0' || value > 600000UL)
+    {
+        return false;
+    }
+    out = static_cast<std::uint32_t>(value);
+    return true;
+}
+
 // v1 takes host:port and splits on the last colon, which is enough for IPv4
 // and hostnames. The bracketed [::1]:port form is a ROADMAP item.
 inline bool split_upstream(const std::string& spec, std::string& host, std::string& port)
