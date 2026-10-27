@@ -228,7 +228,10 @@ struct HeldChunk
 // part of a chunk leaves the rest in `pending` rather than spinning on it,
 // and the event loop says when `to` has room again: once a `Ready` entry for
 // `to` comes back writable, the next flush() picks the pending bytes back up
-// where it left off.
+// where it left off. `reading` can turn false — `from` has sent its EOF —
+// while chunks it sent earlier are still sitting in `held`; flush() has to see
+// both queues empty before it forwards that EOF, or the tail end of the
+// stream would never go out.
 struct Direction
 {
     Direction(int from_fd, int to_fd, const char* label) : from{from_fd}, to{to_fd}, arrow{label}
@@ -287,7 +290,8 @@ void release(Direction& d, std::chrono::steady_clock::time_point now)
 }
 
 // Push as much of `pending` as `to` will take without blocking. Once the source
-// has finished and everything it sent has gone out, forward its EOF.
+// has finished and everything it sent — including anything still waiting in
+// `held` for its due time — has gone out, forward its EOF.
 bool flush(Direction& d)
 {
     while (!d.pending.empty())
@@ -310,8 +314,11 @@ bool flush(Direction& d)
     }
 
     // Forward the EOF instead of tearing down the whole pair, so the opposite
-    // direction can still drain. ENOTCONN means the peer got there first.
-    if (!d.reading && !d.shut)
+    // direction can still drain. ENOTCONN means the peer got there first. A
+    // chunk still sitting in `held` has not reached `pending` yet, so shutting
+    // down here would ship the EOF ahead of bytes that are still due to follow
+    // it; wait for next_due()'s wakeup to release and flush them first.
+    if (!d.reading && !d.shut && d.held.empty())
     {
         if (shutdown(d.to, SHUT_WR) == -1 && errno != ENOTCONN)
         {
