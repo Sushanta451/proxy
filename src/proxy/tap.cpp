@@ -21,7 +21,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <deque>
+#include <optional>
 #include <random>
 #include <iostream>
 #include <string>
@@ -256,6 +258,23 @@ size_t held_bytes(const Direction& d)
     return total;
 }
 
+// The earliest due time still waiting in either direction's held queue, or no
+// value when neither has one. wait() blocks until then instead of forever, so
+// a chunk whose due time arrives with no socket activity still gets woken for.
+std::optional<std::chrono::steady_clock::time_point> next_due(const Direction& a,
+                                                              const Direction& b)
+{
+    std::optional<std::chrono::steady_clock::time_point> earliest;
+    for (const Direction* d : {&a, &b})
+    {
+        if (!d->held.empty() && (!earliest || d->held.front().due < *earliest))
+        {
+            earliest = d->held.front().due;
+        }
+    }
+    return earliest;
+}
+
 // Move every chunk due at or before `now` out of `held` and into `pending`,
 // oldest first, so flush() sends them in the order they arrived.
 void release(Direction& d, std::chrono::steady_clock::time_point now)
@@ -385,12 +404,30 @@ bool relay(int down, int up, const Options& opts)
     std::vector<Ready> ready;
     while (!to_upstream.shut || !to_downstream.shut)
     {
-        // No held chunk needs a wakeup yet, so wait forever; a later step gives
-        // this a real deadline once chunks can be due in the future.
+        int timeout_ms{-1};
+        if (auto due = next_due(to_upstream, to_downstream))
+        {
+            auto remaining{std::chrono::duration_cast<std::chrono::milliseconds>(
+                               *due - std::chrono::steady_clock::now())
+                               .count()};
+            timeout_ms = static_cast<int>(std::max<decltype(remaining)>(remaining, 0));
+        }
+
         if (!loop.modify(down, interest(to_upstream, to_downstream)) ||
-            !loop.modify(up, interest(to_downstream, to_upstream)) || !loop.wait(ready, -1))
+            !loop.modify(up, interest(to_downstream, to_upstream)) || !loop.wait(ready, timeout_ms))
         {
             std::cerr << "event loop: " << std::strerror(errno) << '\n';
+            return false;
+        }
+
+        // wait() can return on the timeout alone, with no fd ready at all, so
+        // release what has fallen due and flush it here rather than relying on
+        // the per-fd handling below to ever run this pass.
+        auto now{std::chrono::steady_clock::now()};
+        release(to_upstream, now);
+        release(to_downstream, now);
+        if (!flush(to_upstream) || !flush(to_downstream))
+        {
             return false;
         }
 
