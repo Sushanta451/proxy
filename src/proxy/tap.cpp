@@ -37,6 +37,8 @@
 namespace
 {
 
+using tcptap::applies_to_c_to_u;
+using tcptap::applies_to_u_to_c;
 using tcptap::EventLoop;
 using tcptap::FaultState;
 using tcptap::kWantRead;
@@ -212,9 +214,8 @@ int dial(const std::string& host, const std::string& port)
     return fd;
 }
 
-// A chunk read off the wire but not yet eligible to go out. `due` is always
-// now or earlier for the moment; a later step lets --delay push it into the
-// future.
+// A chunk read off the wire but not yet eligible to go out. `due` is `now`
+// unless --delay pushed it into the future for this direction.
 struct HeldChunk
 {
     std::chrono::steady_clock::time_point due;
@@ -330,7 +331,9 @@ bool flush(Direction& d)
     return true;
 }
 
-bool read_side(Direction& d)
+// `delay` is this direction's --delay, already zeroed out by the caller if
+// --direction does not select it.
+bool read_side(Direction& d, std::chrono::milliseconds delay)
 {
     char buf[kBufferSize];
     ssize_t received{recv(d.from, buf, sizeof(buf), 0)};
@@ -366,10 +369,8 @@ bool read_side(Direction& d)
     // and the tests read this log while the proxy is still alive. Flush.
     std::cout << std::endl;
 
-    // Everything is due immediately for now, so this chunk clears straight
-    // back out to pending and the relay behaves exactly as before.
     auto now{std::chrono::steady_clock::now()};
-    d.held.push_back({now, std::string(buf, count)});
+    d.held.push_back({now + delay, std::string(buf, count)});
     release(d, now);
     return flush(d);
 }
@@ -395,6 +396,11 @@ bool relay(int down, int up, const Options& opts)
 
     Direction to_upstream{down, up, "c>u"};
     Direction to_downstream{up, down, "u>c"};
+
+    const std::chrono::milliseconds delay_c_to_u{
+        applies_to_c_to_u(opts.faults.direction) ? opts.faults.delay_ms : 0};
+    const std::chrono::milliseconds delay_u_to_c{
+        applies_to_u_to_c(opts.faults.direction) ? opts.faults.delay_ms : 0};
 
     // A side is watched for input on behalf of the direction it feeds, and for
     // room on behalf of the direction that writes to it.
@@ -443,6 +449,7 @@ bool relay(int down, int up, const Options& opts)
             // Each side drains what is queued for it before it is read from.
             Direction& feeds{r.fd == down ? to_upstream : to_downstream};
             Direction& drains{r.fd == down ? to_downstream : to_upstream};
+            std::chrono::milliseconds delay{r.fd == down ? delay_c_to_u : delay_u_to_c};
             if (r.writable && !drains.pending.empty() && !flush(drains))
             {
                 return false;
@@ -450,7 +457,7 @@ bool relay(int down, int up, const Options& opts)
             // epoll reports EPOLLERR/EPOLLHUP even at zero interest, so a reset
             // on a fully throttled direction needs r.writable (trouble sets it
             // too) to force the read past wants_read's backpressure gate.
-            if (r.readable && (wants_read(feeds) || r.writable) && !read_side(feeds))
+            if (r.readable && (wants_read(feeds) || r.writable) && !read_side(feeds, delay))
             {
                 return false;
             }
