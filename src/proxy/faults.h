@@ -21,12 +21,14 @@ enum class FaultDirection
     Both
 };
 
-// What --seed and --direction decided, parsed into Options by parse_args.
+// What --seed, --direction and --delay decided, parsed into Options by
+// parse_args.
 struct FaultConfig
 {
     FaultDirection direction{FaultDirection::Both};
     std::uint32_t seed{0};
     bool seeded{false};
+    std::uint32_t delay_ms{0};
 };
 
 // Per-connection state a fault needs across the life of one relay. Every

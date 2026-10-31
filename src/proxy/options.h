@@ -122,7 +122,7 @@ inline bool parse_direction(const char* text, FaultDirection& out)
 inline void usage(std::ostream& outstream)
 {
     outstream << "usage: tcptap --listen <port> --upstream <host>:<port> [--once] [--seed N]\n"
-              << "              [--direction c>u|u>c|both]\n"
+              << "              [--direction c>u|u>c|both] [--delay MS]\n"
               << "\n"
               << "Accepts one connection on 127.0.0.1:<port>, dials the upstream,\n"
               << "and relays bytes between them, logging every chunk and its\n"
@@ -130,7 +130,9 @@ inline void usage(std::ostream& outstream)
               << "--once serves a single connection, then exits.\n"
               << "--seed N seeds the fault RNG (0..4294967295); without it one is drawn\n"
               << "at random. The seed in use is logged either way, to replay a run.\n"
-              << "--direction restricts faults to one direction (default both).\n";
+              << "--direction restricts faults to one direction (default both).\n"
+              << "--delay MS holds each chunk in that direction for MS milliseconds\n"
+              << "before relaying it (0..600000, default 0).\n";
 }
 
 // Fills *out* from argv, printing any complaint (and the usage banner) to
@@ -172,6 +174,14 @@ inline bool parse_args(int argc, char* argv[], Options& out)
             if (!parse_direction(argv[++i], out.faults.direction))
             {
                 std::cerr << "error: --direction wants c>u, u>c or both\n";
+                return false;
+            }
+        }
+        else if (flag == "--delay" && has_value)
+        {
+            if (!parse_ms(argv[++i], out.faults.delay_ms))
+            {
+                std::cerr << "error: --delay wants milliseconds in 0..600000\n";
                 return false;
             }
         }
