@@ -105,6 +105,6 @@ if(BUILD_TESTING)
 
   set_tests_properties(relay-short relay-longer upstream-refused
     sequential-connections concurrent-connections large-payload
-    slow-reader seed elapsed
+    slow-reader seed elapsed delay
     PROPERTIES TIMEOUT 30)
 endif()
